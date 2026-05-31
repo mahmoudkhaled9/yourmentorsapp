@@ -1235,11 +1235,12 @@ app.put('/api/profile', async (req, res) => {
       return;
     }
     const nextName = String(req.body?.name ?? req.currentUser.name ?? '').trim();
+    const nextEmail = String(req.body?.email ?? req.currentUser.email ?? '').trim();
     const nextPhone = String(req.body?.phone ?? req.currentUser.phone ?? '').trim();
     const nextImage = String(req.body?.avatar ?? req.body?.image ?? req.currentUser.image ?? defaultUserImage).trim() || defaultUserImage;
     await pool.query(
-      'UPDATE users SET name = ?, phone = ?, image = ?, updated_at = ? WHERE id = ?',
-      [nextName, nextPhone, nextImage, nowTs(), req.currentUser.id]
+      'UPDATE users SET name = ?, email = ?, phone = ?, image = ?, updated_at = ? WHERE id = ?',
+      [nextName, nextEmail, nextPhone, nextImage, nowTs(), req.currentUser.id]
     );
     const [rows] = await pool.query(`SELECT ${selectUserColumns} FROM users WHERE id = ? LIMIT 1`, [req.currentUser.id]);
     res.json({ user: serializeUser(rows[0]) });
