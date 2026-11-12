@@ -1905,11 +1905,12 @@ registerCrudRoutes({
   table: 'leads',
   baseSql: 'SELECT * FROM leads',
   orderBy: 'id DESC',
+  scopeField: 'user_id',
   includeGet: false,
   createRow: async (body, currentUser) => {
     const nextId = await nextTableId('leads');
     const available = await getExistingColumns('leads');
-    const assignedToId = body.assignedToId ?? body.userId ?? currentUser.id;
+    const assignedToId = body.assignedToId ?? body.userId ?? (isSuperUser(currentUser) ? null : currentUser.id);
     const statusDetails = await resolveLeadStatus({ statusId: body.statusId ?? body.status_id, status: body.status });
     const leadType = String(body.type ?? 'Lead').trim() || 'Lead';
     const leadDate = toSqlDateOnly(body.date ?? nowTs()) ?? toSqlDateOnly(nowTs());
@@ -1991,7 +1992,7 @@ registerCrudRoutes({
   },
   updateRow: async (body, existing, currentUser) => {
     const available = await getExistingColumns('leads');
-    const assignedToId = body.assignedToId ?? body.userId ?? existing.user_id ?? currentUser.id;
+    const assignedToId = body.assignedToId ?? body.userId ?? existing.user_id ?? (isSuperUser(currentUser) ? null : currentUser.id);
     const statusDetails = await resolveLeadStatus({
       statusId: body.statusId ?? body.status_id ?? existing.status_id ?? existing.statusId,
       status: body.status ?? existing.status ?? null,
@@ -2076,11 +2077,12 @@ registerCrudRoutes({
   table: 'cold_calls',
   baseSql: 'SELECT * FROM cold_calls',
   orderBy: 'id DESC',
+  scopeField: 'user_id',
   includeGet: false,
   createRow: async (body, currentUser) => {
     const nextId = await nextTableId('cold_calls');
     const available = await getExistingColumns('cold_calls');
-    const assignedToId = body.assignedToId ?? body.userId ?? currentUser.id;
+    const assignedToId = body.assignedToId ?? body.userId ?? (isSuperUser(currentUser) ? null : currentUser.id);
     const statusId = await resolveColdCallStatusId(body.statusId ?? body.status_id);
     const row = {
       id: nextId,
@@ -2118,7 +2120,7 @@ registerCrudRoutes({
   },
   updateRow: async (body, existing, currentUser) => {
     const available = await getExistingColumns('cold_calls');
-    const assignedToId = body.assignedToId ?? body.userId ?? existing.user_id ?? currentUser.id;
+    const assignedToId = body.assignedToId ?? body.userId ?? existing.user_id ?? (isSuperUser(currentUser) ? null : currentUser.id);
     const statusId = await resolveColdCallStatusId(body.statusId ?? body.status_id ?? existing.status_id);
     const row = {
       name: String(body.name ?? existing.name ?? '').trim(),
@@ -2156,6 +2158,7 @@ registerCrudRoutes({
   table: 'comments',
   baseSql: 'SELECT * FROM comments',
   orderBy: 'id DESC',
+  scopeField: 'user_id',
   includeGet: false,
   createRow: async (body, currentUser) => {
     const nextId = await nextTableId('comments');
@@ -2563,7 +2566,7 @@ app.post('/api/leads/import', async (req, res) => {
         continue;
       }
       existingPhones.add(normalizedPhone);
-      const assignedToId = item.assignedToId ?? item.userId ?? currentUser.id;
+      const assignedToId = item.assignedToId ?? item.userId ?? (isSuperUser(currentUser) ? null : currentUser.id);
       const statusDetails = await resolveLeadStatus({ statusId: item.statusId ?? item.status_id, status: item.status });
       const leadType = String(item.type ?? 'Lead').trim() || 'Lead';
       const leadDate = toSqlDateOnly(item.date ?? nowTs()) ?? toSqlDateOnly(nowTs());
@@ -2582,10 +2585,10 @@ app.post('/api/leads/import', async (req, res) => {
         project: String(item.project ?? item.projectName ?? '').trim() || null,
         project_id: item.projectId ?? null,
         projectId: item.projectId ?? null,
-        assignedTo: String(item.assignedTo ?? '').trim() || null,
+        assignedTo: null,
         assignedToId,
-        teamLeader: String(item.teamLeader ?? '').trim() || null,
-        teamLeaderId: item.teamLeaderId ?? item.teamLeader_id ?? null,
+        teamLeader: null,
+        teamLeaderId: null,
         date: leadDate,
         isPotential: item.isPotential !== undefined
           ? toBool(item.isPotential)
@@ -2654,7 +2657,7 @@ app.post('/api/cold-calls/import', async (req, res) => {
         continue;
       }
       existingPhones.add(normalizedPhone);
-      const assignedToId = item.assignedToId ?? item.userId ?? currentUser.id;
+      const assignedToId = item.assignedToId ?? item.userId ?? (isSuperUser(currentUser) ? null : currentUser.id);
       const statusId = await resolveColdCallStatusId(item.statusId ?? item.status_id);
       const row = {
         id: nextId++,
@@ -2965,7 +2968,7 @@ app.post('/api/sync/leads', async (req, res) => {
         status_id: item.statusId ?? null,
         source_id: item.sourceId ?? null,
         comment: item.comment ?? null,
-        user_id: item.assignedToId ?? req.currentUser.id,
+        user_id: item.assignedToId ?? null,
         created_at: toSqlDateTime(item.createdAt),
         updated_at: toSqlDateTime(item.updatedAt),
       }),
@@ -2998,7 +3001,7 @@ app.post('/api/sync/cold-calls', async (req, res) => {
         name: item.name,
         phone: item.phone,
         status_id: item.statusId ?? null,
-        user_id: item.assignedToId ?? req.currentUser.id,
+        user_id: item.assignedToId ?? null,
         notes: item.notes ?? null,
         created_at: toSqlDateTime(item.createdAt),
         updated_at: toSqlDateTime(item.updatedAt),
@@ -3258,6 +3261,20 @@ function registerCrudRoutes({
     if (!writeRoles || writeRoles.length === 0) return true;
     return writeRoles.includes(normalizeRole(user?.role));
   };
+  const getPayloadValue = (payload, column) => {
+    if (!payload || !Array.isArray(payload.columns) || !Array.isArray(payload.values)) {
+      return undefined;
+    }
+    const index = payload.columns.indexOf(column);
+    return index === -1 ? undefined : payload.values[index];
+  };
+  const canAccessScopeValue = async (user, value) => {
+    if (!scopeField || isSuperUser(user)) return true;
+    if (value === undefined || value === null || value === '') return false;
+    const visibleUserIds = await getAccessibleUserIds(user);
+    return visibleUserIds.includes(Number(value));
+  };
+  const canAccessRow = async (user, row) => canAccessScopeValue(user, row?.[scopeField]);
 
   if (includeGet) {
     app.get(`/api/${routeBase}`, async (req, res) => {
@@ -3290,6 +3307,10 @@ function registerCrudRoutes({
         return;
       }
       const payload = await createRow(req.body, req.currentUser);
+      if (scopeField && !(await canAccessScopeValue(req.currentUser, getPayloadValue(payload, scopeField)))) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
       const columns = payload.columns;
       const values = payload.values;
       const placeholders = columns.map(() => '?').join(', ');
@@ -3339,7 +3360,16 @@ function registerCrudRoutes({
         res.status(404).json({ error: 'Not found' });
         return;
       }
+      if (!(await canAccessRow(req.currentUser, existing))) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
       const payload = await updateRow(req.body, existing, req.currentUser);
+      const nextScopeValue = getPayloadValue(payload, scopeField);
+      if (scopeField && nextScopeValue !== undefined && !(await canAccessScopeValue(req.currentUser, nextScopeValue))) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
       const setClause = payload.columns.map((column) => `${column} = ?`).join(', ');
       await pool.query(
         `UPDATE ${table} SET ${setClause} WHERE id = ?`,
@@ -3378,6 +3408,14 @@ function registerCrudRoutes({
         req.params.id,
       ]);
       const existing = existingRows[0] ?? null;
+      if (!existing) {
+        res.status(404).json({ error: 'Not found' });
+        return;
+      }
+      if (!(await canAccessRow(req.currentUser, existing))) {
+        res.status(403).json({ error: 'Forbidden' });
+        return;
+      }
       await pool.query(`DELETE FROM ${table} WHERE id = ?`, [req.params.id]);
       await createActivityLog({
         userId: req.currentUser.id,
