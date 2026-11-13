@@ -56,7 +56,7 @@ const destroyCleanup = async (auth) => {
 
 const main = async () => {
   const now = Date.now();
-  const admin = await login('admin@mentors.com', 'password');
+  const admin = await login(process.env.SMOKE_EMAIL ?? 'admin@mentors.com', process.env.SMOKE_PASSWORD ?? (() => { throw new Error('set SMOKE_EMAIL and SMOKE_PASSWORD (an admin account of the server you are testing)'); })());
   const adminAuth = authHeaders(admin.token);
   try {
     ok(await request('/api/health'), 'health');
