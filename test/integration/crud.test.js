@@ -168,6 +168,20 @@ test('sources, developers, projects: CRUD, referential checks and in-use guards'
   const listed = (await app.api.get('/api/projects', A1.token)).body.find((p) => p.id === proj.body.id);
   assert.equal(listed.developerName, `Acme Dev ${app.runTag}`);
   assert.equal(listed.destinationName, 'New Cairo');
+  // project details are stored and returned; a partial update keeps the other fields
+  const detailed = await app.api.put(`/api/projects/${proj.body.id}`, { location: 'Fifth Settlement', startingPrice: '4,500,000', downPayment: '10% over 8 years', description: 'Phase 1' }, app.adminToken);
+  assert.equal(detailed.status, 200, JSON.stringify(detailed.body));
+  assert.deepEqual(
+    { location: detailed.body.item.location, startingPrice: detailed.body.item.startingPrice, downPayment: detailed.body.item.downPayment, description: detailed.body.item.description, destinationName: detailed.body.item.destinationName },
+    { location: 'Fifth Settlement', startingPrice: 4500000, downPayment: '10% over 8 years', description: 'Phase 1', destinationName: 'New Cairo' },
+  );
+  const renamed = await app.api.put(`/api/projects/${proj.body.id}`, { name: `Acme Tower II ${app.runTag}` }, app.adminToken);
+  assert.equal(renamed.body.item.location, 'Fifth Settlement');
+  assert.equal(renamed.body.item.startingPrice, 4500000);
+  assert.equal((await app.api.put(`/api/projects/${proj.body.id}`, { startingPrice: 'lots' }, app.adminToken)).status, 400);
+  const cleared = await app.api.put(`/api/projects/${proj.body.id}`, { startingPrice: '', location: '' }, app.adminToken);
+  assert.equal(cleared.body.item.startingPrice, undefined);
+  assert.equal(cleared.body.item.location, undefined);
   assert.equal((await app.api.del(`/api/developers/${dev.body.id}`, app.adminToken)).status, 409, 'developer still has a project');
   const l = await app.api.post('/api/leads', lead({ projectId: proj.body.id, source: `Billboard ${app.runTag}`, assignedToId: A1.id }), app.adminToken);
   assert.equal((await app.api.del(`/api/projects/${proj.body.id}`, app.adminToken)).status, 409);

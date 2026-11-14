@@ -29,7 +29,8 @@ export const serializeUser = (row) => ({
   departmentId: row.department_id ?? undefined,
   jobtitleId: row.jobtitle_id ?? undefined,
   teamLeaderId: row.parent_id ?? undefined,
-  avatar: row.image ?? undefined,
+  // The stored placeholder is a third-party hot-link; report it as "no picture" so clients show initials instead.
+  avatar: row.image && row.image !== DEFAULT_USER_IMAGE ? row.image : undefined,
   isActive: Number(row.status ?? 1) === 1,
   createdAt: toIso(row.created_at),
 });

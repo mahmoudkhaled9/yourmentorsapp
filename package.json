@@ -15,6 +15,7 @@
     "test:api": "node --test --test-concurrency=4 test/integration/*.test.js",
     "test:canonical": "node scripts/run-with-env.mjs TEST_SCHEMA=canonical -- node --test --test-concurrency=4 test/integration/*.test.js",
     "test:mysql": "node scripts/test-mysql.mjs",
+    "test:e2e": "npm --prefix ../mentorsfront run test:e2e",
     "test:all": "npm run check && npm run test:unit && npm run test:integration && npm run test:canonical",
     "verify": "npm run test:all",
     "smoke": "node scripts/smoke-test.mjs",
@@ -23,7 +24,8 @@
     "seed:branch2": "node scripts/seed-second-branch.mjs",
     "backup": "node scripts/export-backup.mjs",
     "backup:portable": "node scripts/export-backup.mjs --portable",
-    "restore": "node scripts/restore-backup.mjs"
+    "restore": "node scripts/restore-backup.mjs",
+    "fix:developer-logos": "node scripts/fix-developer-logos.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

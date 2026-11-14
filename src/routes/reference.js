@@ -207,10 +207,17 @@ export function referenceRoutes(ctx) {
   const projectSelect = () => {
     const dev = schema.coalesce('projects', ['developer_id', 'developerId']);
     const dest = schema.has('projects', 'destination_id') ? 'projects.destination_id' : 'NULL';
-    return `SELECT projects.id, projects.name, ${dev} AS developer_id, developers.name AS developer_name, ${dest} AS destination_id, destinations.name AS destination_name
+    const opt = (col) => (schema.has('projects', col) ? `projects.\`${col}\`` : 'NULL');
+    return `SELECT projects.id, projects.name, ${dev} AS developer_id, developers.name AS developer_name, ${dest} AS destination_id, destinations.name AS destination_name,
+       ${opt('location')} AS location, ${opt('startingPrice')} AS starting_price, ${opt('downPayment')} AS down_payment, ${opt('description')} AS description
        FROM projects LEFT JOIN developers ON developers.id = ${dev} LEFT JOIN destinations ON destinations.id = ${dest}`;
   };
-  const serializeProject = (r) => ({ id: r.id, name: r.name, developerId: r.developer_id ?? undefined, developerName: r.developer_name ?? undefined, destinationId: r.destination_id ?? undefined, destinationName: r.destination_name ?? undefined });
+  const serializeProject = (r) => ({
+    id: r.id, name: r.name, developerId: r.developer_id ?? undefined, developerName: r.developer_name ?? undefined,
+    destinationId: r.destination_id ?? undefined, destinationName: r.destination_name ?? undefined,
+    location: r.location || undefined, startingPrice: r.starting_price === null || r.starting_price === undefined ? undefined : Number(r.starting_price),
+    downPayment: r.down_payment || undefined, description: r.description || undefined,
+  });
   router.get('/projects', asyncHandler(async (req, res) => res.json((await db.rows(`${projectSelect()} ORDER BY projects.id ASC`)).map(serializeProject))));
   writable({
     route: 'projects', table: 'projects', entity: 'Project',
@@ -220,6 +227,11 @@ export function referenceRoutes(ctx) {
       developerProvided: 'developerId' in body || 'developer_id' in body,
       destinationId: v.int(body.destinationId, 'destinationId', { min: 1 }),
       destinationProvided: 'destinationId' in body,
+      location: v.string(body.location, 'location', { max: 255 }),
+      startingPrice: v.money(body.startingPrice, 'startingPrice'),
+      startingPriceProvided: 'startingPrice' in body,
+      downPayment: v.string(body.downPayment, 'downPayment', { max: 255 }),
+      description: v.string(body.description, 'description', { max: 5000 }),
     }),
     toRow: async (p, e, tx) => {
       const developerId = p.developerProvided ? p.developerId ?? null : e?.developer_id ?? e?.developerId ?? null;
@@ -233,7 +245,12 @@ export function referenceRoutes(ctx) {
       if (destinationId && !(await tx.one('SELECT id FROM destinations WHERE id = ?', [destinationId]))) {
         throw badRequest('The selected destination does not exist', [{ field: 'destinationId', message: 'does not exist' }]);
       }
-      return { name: p.name, developer_id: developerId, developerId, developerName, destination_id: destinationId };
+      const text = (value, key) => (value !== undefined ? value || null : e?.[key] ?? null);
+      return {
+        name: p.name, developer_id: developerId, developerId, developerName, destination_id: destinationId,
+        location: text(p.location, 'location'), downPayment: text(p.downPayment, 'downPayment'), description: text(p.description, 'description'),
+        startingPrice: p.startingPriceProvided ? p.startingPrice ?? null : e?.startingPrice ?? null,
+      };
     },
     usage: [
       { table: 'leads', columns: ['project_id', 'projectId'], label: 'leads' },

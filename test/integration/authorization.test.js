@@ -88,6 +88,10 @@ test('avatar must be a small image data-URL or an http(s) URL', async () => {
   assert.equal((await app.api.put('/api/profile', { avatar: 'data:text/html;base64,PHNjcmlwdD4=' }, A1.token)).status, 400);
   assert.equal((await app.api.put('/api/profile', { avatar: `data:image/png;base64,${'A'.repeat(500000)}` }, A1.token)).status, 400);
   assert.equal((await app.api.put('/api/profile', { avatar: 'data:image/png;base64,iVBORw0KGgo=' }, A1.token)).status, 200);
+  // resetting the picture stores the legacy placeholder, which the API reports as "no picture" (no third-party hot-link)
+  const reset = await app.api.put('/api/profile', { avatar: '' }, A1.token);
+  assert.equal(reset.status, 200);
+  assert.equal((await app.api.get('/api/auth/me', A1.token)).body.user.avatar, undefined);
 });
 
 test('record visibility follows the hierarchy; siblings and other teams see nothing', async () => {
