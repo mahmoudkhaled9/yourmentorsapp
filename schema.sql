@@ -118,13 +118,14 @@ CREATE TABLE IF NOT EXISTS cold_calls (
   notes LONGTEXT,
   created_at TIMESTAMP NULL,
   updated_at TIMESTAMP NULL,
-  FOREIGN KEY (status_id) REFERENCES statuses(id) ON DELETE CASCADE,
+  FOREIGN KEY (status_id) REFERENCES statuses(id) ON DELETE RESTRICT,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
+-- History is never deleted with its lead, cold call or author (see migration 009_safe_foreign_keys).
 CREATE TABLE IF NOT EXISTS comments (
   id INT PRIMARY KEY,
-  user_id INT NOT NULL,
+  user_id INT NULL,
   lead_id INT NULL,
   cold_call_id INT NULL,
   entity_type VARCHAR(50) NULL,
@@ -132,9 +133,9 @@ CREATE TABLE IF NOT EXISTS comments (
   body TEXT NOT NULL,
   created_at TIMESTAMP NULL,
   updated_at TIMESTAMP NULL,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
-  FOREIGN KEY (cold_call_id) REFERENCES cold_calls(id) ON DELETE CASCADE
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE SET NULL,
+  FOREIGN KEY (cold_call_id) REFERENCES cold_calls(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS deals (

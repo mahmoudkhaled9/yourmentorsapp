@@ -1,6 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { isMysql, schemaName, startTestApp } from '../support/harness.js';
+import { isMysql, startTestApp } from '../support/harness.js';
 
 let app; let T; let A1; let A2; let phone;
 const q = async (sql, params) => (await app.pool.query(sql, params))[0];
@@ -108,10 +108,10 @@ test("lead delete removes the row; its comments are kept (no silent data loss) a
   await app.api.post('/api/comments', { entityType: 'lead', entityId: id, content: 'keep me' }, A1.token);
   assert.equal((await app.api.del(`/api/leads/${id}`, app.adminToken)).status, 200);
   assert.equal((await q('SELECT id FROM leads WHERE id = ?', [id])).length, 0);
-  // Production has no foreign keys, so the history is kept. A database created from schema.sql has comments.lead_id
-  // ... ON DELETE CASCADE, so there the database itself removes them (documented behaviour of schema.sql).
+  // Kept in EVERY layout. A database built from schema.sql used to have comments.lead_id ... ON DELETE CASCADE, so a
+  // new (e.g. production) installation silently deleted the history; migration 009 / schema.sql now use SET NULL.
   const kept = (await q('SELECT id FROM comments WHERE entity_id = ? AND entity_type = ?', [id, 'lead'])).length;
-  assert.equal(kept, schemaName() === 'canonical' ? 0 : 1);
+  assert.equal(kept, 1);
   const next = (await app.api.post('/api/leads', lead(), app.adminToken)).body.id;
   assert.ok(next > id, 'the deleted id is not handed out again (old comments must not attach to a new client)');
 });
@@ -255,7 +255,11 @@ test('deleting a user keeps their records (unassigned), detaches reports-to link
   const boss = await app.createUser({ role: 'team_leader' });
   const sub = await app.createUser({ teamLeaderId: boss.id });
   const l = await app.api.post('/api/leads', lead({ assignedToId: boss.id }), app.adminToken);
+  const note = await app.api.post('/api/comments', { entityType: 'lead', entityId: l.body.id, content: 'written by the boss' }, boss.token);
+  assert.equal(note.status, 200, JSON.stringify(note.body));
   assert.equal((await app.api.del(`/api/users/${boss.id}`, app.adminToken)).status, 200);
+  // on a database built from schema.sql, MySQL used to delete every comment of a deleted user (ON DELETE CASCADE)
+  assert.equal(Number((await q('SELECT COUNT(*) AS c FROM comments WHERE id = ?', [note.body.item?.id ?? note.body.id]))[0].c), 1, "the deleted user's comments are kept");
   assert.equal((await q('SELECT user_id FROM leads WHERE id = ?', [l.body.id]))[0].user_id, null);
   assert.equal((await q('SELECT parent_id FROM users WHERE id = ?', [sub.id]))[0].parent_id, null);
   assert.equal((await app.api.post('/api/auth/login', { email: boss.email, password: boss.password })).status, 401);
