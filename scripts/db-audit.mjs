@@ -84,7 +84,7 @@ try {
   const phoneCol = schema.has('leads', 'phone') ? 'phone' : null;
   if (phoneCol) {
     const d = await rows('SELECT COUNT(*) c FROM (SELECT phone FROM leads WHERE phone <> \'\' GROUP BY phone HAVING COUNT(*) > 1) x');
-    if (Number(d[0].c)) bad(`${d[0].c} phone number(s) shared by more than one lead`); else ok('no phone number is shared by two leads');
+    if (Number(d[0].c)) note(`${d[0].c} phone number(s) shared by more than one lead (allowed when entered by hand; imports skip them)`); else ok('no phone number is shared by two leads');
   }
   if (schema.has('call_history', 'request_id')) {
     const d = await rows('SELECT COUNT(*) c FROM (SELECT user_id, request_id FROM call_history WHERE request_id IS NOT NULL GROUP BY user_id, request_id HAVING COUNT(*) > 1) x');

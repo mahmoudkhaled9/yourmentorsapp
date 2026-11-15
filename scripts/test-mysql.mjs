@@ -17,7 +17,8 @@ import mysql from 'mysql2/promise';
 import { assertTempName, childEnv, resolveAccounts, tempDatabaseName } from './lib/qa-db.mjs';
 
 dotenv.config({ quiet: true });
-if (fs.existsSync('.env.test')) dotenv.config({ path: '.env.test', override: true, quiet: true });
+// shell environment > .env.test > .env (a file never overrides a value set explicitly, e.g. by CI)
+if (fs.existsSync('.env.test')) dotenv.config({ path: '.env.test', quiet: true });
 
 let accounts;
 try {
@@ -30,6 +31,9 @@ const { prod, admin, tester } = accounts;
 const configured = prod.database;
 const name = tempDatabaseName();
 const keep = process.argv.includes('--keep');
+// --e2e: instead of the API suites, run the frontend's browser tests + interaction audit (../mentorsfront) against the
+// real backend on this temporary database
+const e2e = process.argv.includes('--e2e');
 const q = (id) => `\`${id}\``; // only ever called with names that passed assertTempName (letters, digits, underscore)
 
 /** Read-only: one SELECT COUNT(*) per table, inside a READ ONLY transaction. Throws on any error (mandatory). */
@@ -102,10 +106,18 @@ try {
   console.log(`test account "${tester.user}" reaches ${name} and cannot see "${configured}"`);
 
   if (!interrupted) {
-    const files = fs.readdirSync('test/integration').filter((f) => f.endsWith('.test.js')).sort().map((f) => `test/integration/${f}`);
-    if (!files.length) throw new Error('no test files found in test/integration');
-    console.log(`running ${files.length} integration suites: ${files.map((f) => f.split('/').pop()).join(', ')}`);
-    child = spawn(process.execPath, ['--test', '--test-concurrency=1', ...files], { stdio: 'inherit', env: childEnv(process.env, { tester, database: name }) });
+    const env = childEnv(process.env, { tester, database: name });
+    if (e2e) {
+      const front = new URL('../../mentorsfront/', import.meta.url).pathname;
+      if (!fs.existsSync(`${front}e2e/run.mjs`)) throw new Error(`frontend not found at ${front}`);
+      console.log('running the browser tests + interaction audit against this database');
+      child = spawn(process.execPath, ['e2e/run.mjs', '--audit'], { stdio: 'inherit', env, cwd: front });
+    } else {
+      const files = fs.readdirSync('test/integration').filter((f) => f.endsWith('.test.js')).sort().map((f) => `test/integration/${f}`);
+      if (!files.length) throw new Error('no test files found in test/integration');
+      console.log(`running ${files.length} integration suites: ${files.map((f) => f.split('/').pop()).join(', ')}`);
+      child = spawn(process.execPath, ['--test', '--test-concurrency=1', ...files], { stdio: 'inherit', env });
+    }
     exitCode = await new Promise((resolve) => {
       child.on('exit', (code) => resolve(code ?? 1)); // killed by a signal = failure
       child.on('error', () => resolve(1));

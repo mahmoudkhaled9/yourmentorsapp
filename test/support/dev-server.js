@@ -12,6 +12,8 @@ import crypto from 'node:crypto';
 import { createSqlitePool } from './mysql-sqlite.js';
 import { loadConfig } from '../../src/config.js';
 import { start } from '../../src/server.js';
+import { createMysqlPool } from '../../src/db.js';
+import { TEMP_NAME } from '../../scripts/lib/qa-db.mjs';
 import { DEMO_ACCOUNTS, seedDemoCompany } from '../../scripts/lib/dev-data.mjs';
 
 const arg = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : fallback; };
@@ -25,7 +27,18 @@ const config = loadConfig({
   CORS_ORIGIN: process.env.CORS_ORIGIN ?? 'http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173',
   LOGIN_MAX_FAILURES: '50', API_MAX_PER_USER_PER_MIN: '100000', LOGIN_MAX_PER_IP_PER_MIN: '10000', API_MAX_PER_IP_PER_15MIN: '1000000',
 });
-const pool = createSqlitePool({ schemaSql: fs.readFileSync(new URL('./schema.sqlite.sql', import.meta.url), 'utf8') });
+// TEST_DB=mysql (set by `npm run test:mysql -- --e2e`): the same demo company in a REAL, empty, temporary MySQL database.
+// Only ever a mentors_crm_test_<14 digits> database, re-checked on the live connection before anything is written.
+let pool;
+if (process.env.TEST_DB === 'mysql') {
+  const database = String(process.env.TEST_DB_NAME ?? '');
+  if (!TEMP_NAME.test(database)) throw new Error(`refusing: "${database}" is not a temporary test database`);
+  pool = createMysqlPool({ host: process.env.TEST_DB_HOST, port: Number(process.env.TEST_DB_PORT ?? 3306), user: process.env.TEST_DB_USER, password: process.env.TEST_DB_PASSWORD, database, poolSize: 10, queueLimit: 0 });
+  const [[row]] = await pool.query('SELECT DATABASE() AS db');
+  if (row.db !== database) throw new Error(`refusing: connected to "${row.db}"`);
+} else {
+  pool = createSqlitePool({ schemaSql: fs.readFileSync(new URL('./schema.sqlite.sql', import.meta.url), 'utf8') });
+}
 const { port: actual } = await start({ config, pool });
 const base = `http://127.0.0.1:${actual}/api`;
 
@@ -42,5 +55,5 @@ if (process.argv.includes('--demo')) {
   await seedDemoCompany((method, path, body) => call(method, path, body, admin), { password: DEMO_PASSWORD });
 }
 
-console.log(`DEMO API ready on ${base}  (in-memory, test data only)`);
+console.log(`DEMO API ready on ${base}  (${process.env.TEST_DB === 'mysql' ? `MySQL ${process.env.TEST_DB_NAME}` : 'in-memory'}, test data only)`);
 console.log(`accounts (password "${DEMO_PASSWORD}"): ${Object.entries(DEMO_ACCOUNTS).map(([k, v]) => `${k}=${v}`).join('  ')}`);

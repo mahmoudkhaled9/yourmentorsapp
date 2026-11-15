@@ -52,7 +52,10 @@ export async function seedDemoCompany(call, { password, includeAdmin = false } =
   const statuses = await call('GET', 'statuses');
   const developers = new Set((await call('GET', 'developers')).map((d) => Number(d.id)));
   const projects = (await call('GET', 'projects')).filter((p) => developers.has(Number(p.developerId ?? p.developer_id)));
-  const opts = await call('GET', 'lead-options');
+  const rawOpts = await call('GET', 'lead-options');
+  // only choices that are still offered: a deactivated destination / property type is refused for new leads
+  const active = (list) => (list ?? []).filter((o) => o.isActive !== false && o.is_active !== 0);
+  const opts = { ...rawOpts, destinations: active(rawOpts.destinations), propertyTypes: active(rawOpts.propertyTypes) };
   if (!statuses.length) throw new Error('no statuses: start the server once so the base data is seeded');
   const pick = (list, i) => (list.length ? list[i % list.length] : undefined);
 

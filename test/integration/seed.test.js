@@ -25,8 +25,10 @@ test('seed: a fresh database + base seed + demo company has no orphan relationsh
 
   const { problems } = await findOrphans(app.ctx.db, app.ctx.schema);
   assert.deepEqual(problems, [], 'no orphan references');
-  const phones = await app.ctx.db.rows('SELECT phone, COUNT(*) AS n FROM leads GROUP BY phone HAVING COUNT(*) > 1');
-  assert.equal(phones.length, 0, 'no duplicate leads');
+  // the seeder never duplicates its own records (other suites may share the database on the real-MySQL run, and a
+  // manually entered lead may legitimately share a phone, so only the demo company's phones are checked)
+  const demoPhones = await app.ctx.db.rows("SELECT phone, COUNT(*) AS n FROM leads WHERE phone LIKE '011200%' GROUP BY phone HAVING COUNT(*) > 1");
+  assert.equal(demoPhones.length, 0, 'no duplicate demo leads');
 });
 
 test('seed: all seven roles exist in one reporting line and the hierarchy scopes what each one sees', async () => {

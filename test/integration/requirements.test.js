@@ -17,8 +17,11 @@ const dest = (name) => opts.destinations.find((d) => d.name === name).id;
 const type = (name) => opts.propertyTypes.find((d) => d.name === name).id;
 
 test('the default destinations and property types from the requirements are available to everybody', async () => {
-  assert.deepEqual(opts.destinations.map((d) => d.name), ['New Cairo', 'New Capital', 'West Cairo', 'El Gouna', 'North Coast', 'Ain Sokhna']);
-  assert.deepEqual(opts.propertyTypes.map((d) => d.name), ['Studio', '1 Bedroom', '2 Bedrooms', '3 Bedrooms', 'Duplex', 'Townhouse', 'Twin House', 'Standalone', 'One-story property']);
+  // every default is there, in this order (on the real-MySQL run all suites share one database, so options added by
+  // other tests may appear around them: they are filtered out before comparing)
+  const inOrder = (list, expected) => assert.deepEqual(list.map((d) => d.name).filter((n) => expected.includes(n)), expected);
+  inOrder(opts.destinations, ['New Cairo', 'New Capital', 'West Cairo', 'El Gouna', 'North Coast', 'Ain Sokhna']);
+  inOrder(opts.propertyTypes, ['Studio', '1 Bedroom', '2 Bedrooms', '3 Bedrooms', 'Duplex', 'Townhouse', 'Twin House', 'Standalone', 'One-story property']);
   // exactly the business lists, in this order, and nothing like "Not specified"
   assert.deepEqual(opts.delivery.map((d) => d.label), ['RTM', '1 Year', '2 Years', '3 Years', '4 Years']);
   assert.deepEqual(opts.finishing.map((d) => d.label), ['Core & Shell', 'Semi-Finished', 'Fully Finished']);

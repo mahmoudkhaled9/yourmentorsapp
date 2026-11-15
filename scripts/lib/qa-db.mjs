@@ -54,7 +54,7 @@ export function resolveAccounts(env) {
  */
 export function childEnv(baseEnv, { tester, database }) {
   assertTempName(database);
-  const keep = ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'LC_ALL', 'TZ', 'SystemRoot', 'NODE_OPTIONS', 'TERM', 'CI'];
+  const keep = ['PATH', 'HOME', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'LC_ALL', 'TZ', 'SystemRoot', 'NODE_OPTIONS', 'TERM', 'CI', 'PLAYWRIGHT_MODULE', 'PLAYWRIGHT_BROWSERS_PATH'];
   const env = {};
   for (const k of keep) if (baseEnv[k] !== undefined) env[k] = baseEnv[k];
   Object.assign(env, {
