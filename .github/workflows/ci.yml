@@ -15,16 +15,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # package-lock.json is git-ignored in this repo, so `npm ci` is not possible
-      - run: npm install --no-audit --no-fund
+      # package-lock.json is committed: install exactly the locked versions
+      - run: npm ci --no-audit --no-fund
       - run: npm run verify
+      # security gate: no known high/critical advisory in the production dependencies
+      - run: npm audit --omit=dev --audit-level=high
 
   mysql:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
       mysql:
-        image: mysql:8.0
+        image: mysql:8.4
         env:
           MYSQL_ROOT_PASSWORD: ci-only-root-password
         ports: ['3306:3306']
@@ -36,7 +38,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
       # Same account separation as on a real machine (scripts/qa-mysql-setup.sql). Host '%' because the runner reaches
       # the MySQL container through Docker's bridge, not 127.0.0.1. `mentors_crm_guard` stands in for the real database:
       # the run reads its row counts before and after and must prove the test account cannot even see it.

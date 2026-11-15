@@ -1,0 +1,12 @@
+# sudo cp deploy/mentors-crm-backup.* /etc/systemd/system/ && sudo systemctl daemon-reload
+# sudo systemctl enable --now mentors-crm-backup.timer      check: systemctl list-timers | grep mentors
+[Unit]
+Description=Daily Your Mentor CRM database backup
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

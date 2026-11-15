@@ -1,0 +1,10 @@
+# Daily database backup (see deploy/mentors-crm-backup.timer). Writes to BACKUP_DIR from .env; keeps BACKUP_RETENTION_DAYS.
+[Unit]
+Description=Your Mentor CRM database backup
+After=mysql.service
+
+[Service]
+Type=oneshot
+User=<service-user>
+WorkingDirectory=/opt/mentors-crm/yourmentorsapp
+ExecStart=/usr/bin/node scripts/backup-mysql.mjs
