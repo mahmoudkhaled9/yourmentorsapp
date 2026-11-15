@@ -74,6 +74,8 @@ export function loadConfig(env = process.env) {
     jwt: { secret, expiresIn: env.JWT_EXPIRES_IN || '7d' },
     cors: { origins: corsOrigins, allowAll: corsAll },
     trustProxy,
+    /** Production only: also insert the sample developers / projects from seed/ (off by default). */
+    seedDemoCatalog: env.SEED_DEMO_CATALOG === 'true',
     bcryptRounds: toInt(env.BCRYPT_ROUNDS, 10, { min: 4, max: 14 }),
     logLevel: env.LOG_LEVEL || (isProd ? 'info' : 'debug'),
     logJson: isProd || env.LOG_FORMAT === 'json',

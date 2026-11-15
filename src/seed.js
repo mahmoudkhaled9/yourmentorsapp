@@ -59,8 +59,12 @@ export async function seedBaseData(ctx) {
     if (!dept) dept = { id: Number((await db.exec('INSERT INTO departments (name, created_at, updated_at) VALUES (?, ?, ?)', ['Sales', now, now])).insertId) };
     await seedIfEmpty(ctx, 'jobtitles', titles.map((t) => dated({ id: t.id, name: t.name, department_id: dept.id })));
   }
+  // Production starts WITHOUT the sample catalog (8 sample developers with placeholder contacts, 10 sample projects):
+  // real developers and projects are entered by the company. SEED_DEMO_CATALOG=true opts in explicitly.
+  const sampleCatalog = !ctx.config.isProd || ctx.config.seedDemoCatalog;
+  if (!sampleCatalog && (developers?.length || projects?.length)) logger.info('production: sample developers / projects not seeded');
   // Developers are inserted only when missing (by id) - the old code re-wrote them on EVERY start, undoing admin edits.
-  for (const d of developers ?? []) {
+  for (const d of sampleCatalog ? developers ?? [] : []) {
     if (await db.one('SELECT id FROM developers WHERE id = ?', [d.id])) continue;
     const row = schema.only('developers', dated({ id: d.id, name: d.name, logo: d.logo ?? null, description: d.description ?? null, phone: d.phone ?? null, whatsapp: d.whatsapp ?? null, email: d.email ?? null, website: d.website ?? null, establishedYear: d.establishedYear ?? null, foundedBy: d.foundedBy ?? null }));
     const cols = Object.keys(row);
@@ -74,7 +78,7 @@ export async function seedBaseData(ctx) {
     if (p.developerId && developerId === null) logger.warn(`seed project "${p.name}" refers to missing developer #${p.developerId}: stored without a developer`);
     return dated({ id: p.id, name: p.name, developer_id: developerId, developerId });
   });
-  await seedIfEmpty(ctx, 'projects', projectRows);
+  if (sampleCatalog) await seedIfEmpty(ctx, 'projects', projectRows);
   if (agentCare) await seedIfEmpty(ctx, 'agent_care', [{ id: agentCare.id, name: agentCare.name, phone: agentCare.phone, whatsapp: agentCare.whatsapp, email: agentCare.email }]);
   // One-time backfill: reports are derived from comments; an empty reports table with existing comments means an upgrade.
   if (schema.hasTable('reports')) {
