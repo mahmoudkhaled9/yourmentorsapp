@@ -37,10 +37,25 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
-      # creates mentors_crm_test_<timestamp>, runs the suites, drops only that database
+      # Same account separation as on a real machine (scripts/qa-mysql-setup.sql). Host '%' because the runner reaches
+      # the MySQL container through Docker's bridge, not 127.0.0.1. `mentors_crm_guard` stands in for the real database:
+      # the run reads its row counts before and after and must prove the test account cannot even see it.
+      - name: QA accounts + a stand-in "real" database
+        run: |
+          sed -e "s/<qa-admin-password>/ci-qa-admin-pass/" -e "s/<qa-test-password>/ci-qa-test-pass/" -e "s/'@'127\.0\.0\.1'/'@'%'/g" scripts/qa-mysql-setup.sql \
+            | mysql -h 127.0.0.1 -P 3306 -uroot -pci-only-root-password
+          mysql -h 127.0.0.1 -P 3306 -uroot -pci-only-root-password -e "CREATE DATABASE mentors_crm_guard; CREATE TABLE mentors_crm_guard.sentinel (id INT PRIMARY KEY); INSERT INTO mentors_crm_guard.sentinel VALUES (1);"
+      # creates mentors_crm_test_<timestamp> (QA admin), runs the suites (QA test account only), drops only that database
       - run: npm run test:mysql
         env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: ci-only-root-password
+          DB_NAME: mentors_crm_guard
           TEST_DB_HOST: 127.0.0.1
           TEST_DB_PORT: 3306
-          TEST_DB_USER: root
-          TEST_DB_PASSWORD: ci-only-root-password
+          TEST_DB_ADMIN_USER: mentors_qa_admin
+          TEST_DB_ADMIN_PASSWORD: ci-qa-admin-pass
+          TEST_DB_USER: mentors_qa
+          TEST_DB_PASSWORD: ci-qa-test-pass

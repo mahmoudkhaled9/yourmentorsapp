@@ -26,23 +26,26 @@ none of them drops or rewrites data. Each file says how to roll it back by hand.
 | `CORS_ORIGIN` | comma-separated frontend origins allowed to call the API |
 | `TRUST_PROXY` | number of reverse proxies in front (so rate limits see the real client IP) |
 | `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD` | first administrator, used only on an empty database |
-| `TEST_DB_*` | MySQL server for `npm run test:mysql` (a fresh `*_test` database is created per run) |
+| `TEST_DB_*`, `TEST_DB_ADMIN_*` | QA accounts for `npm run test:mysql`, kept in the git-ignored `.env.test` (see below), never the production account |
 
 ## Scripts
 
 | Command | What it does |
 |---|---|
 | `npm start` / `npm run dev` | start the API (dev = restart on change) |
-| `npm run dev:demo` | the real API on an **in-memory** database with a demo company (port 4011, no MySQL). Accounts: `admin@demo.test`, `owner@`, `director@`, `manager@`, `leader@`, `agent@`, `agent2@`, `leader2@`, `agent3@demo.test`, password `Demo-Pass-2026` |
+| `npm run dev:demo` | the real API on an **in-memory** database with a demo company (port 4011, no MySQL). Accounts: `admin@demo.test`, `owner@`, `director@`, `manager@`, `supervisor@`, `leader@`, `agent@`, `agent2@`, `leader2@`, `agent3@demo.test`, password `Demo-Pass-2026` |
 | `npm run check` | syntax check of every source file |
 | `npm run test:unit` | unit tests (config, validation, phone rules) |
 | `npm run test:integration` / `test:api` | API tests over HTTP against the real app on the production table layout (in-memory) |
 | `npm run test:canonical` | the same API tests on a database built from scratch by the migrations |
-| `npm run test:mysql` | the API tests on a **real MySQL**: creates `mentors_crm_test_<time>`, drops only that database afterwards |
+| `npm run qa:prepare` | one-time: generates the two QA account passwords into `.env.test` and `.qa-mysql-setup.local.sql` (git-ignored, not printed); then run `mysql -h 127.0.0.1 -u root -p < .qa-mysql-setup.local.sql` yourself |
+| `npm run test:mysql` | the API tests on a **real MySQL**: the QA admin account creates `mentors_crm_test_<time>`, the tests run with the restricted QA account only (proven unable to see `mentors_crm`), then only that database is dropped |
 | `npm run test:e2e` | browser tests (runs `mentorsfront`'s `test:e2e`) |
 | `npm run test:all` / `verify` | check + unit + integration + canonical |
-| `npm run backup` / `restore` | export / import the database |
-| `npm run fix:developer-logos` | **dry run** of the developer-logo repair (the shipped data had logos swapped between developers). Add `-- --apply` to update; only rows still holding the exact wrong value are changed. Take a backup first. |
+| `npm run backup` / `restore` | export / import the database (`backups/` is git-ignored: dumps never go to GitHub) |
+| `npm run db:audit` | **read-only** integrity audit of the database in `.env`: migrations, roles, bcrypt, reporting loops, orphan references, option values, duplicates |
+| `npm run seed:dev` | adds the demo company to the **local** development database through the API (refuses anything but `127.0.0.1:3306/mentors_crm`); idempotent, never changes existing rows. `-- --fix-orphans` detaches projects from deleted developers. Password in the git-ignored `.dev-seed-accounts.local.txt` |
+| `npm run fix:developer-logos` | **dry run** of the developer-logo repair: sets the logo verified for each built-in developer (`src/domain/developerLogos.js`; developers without a verified file get none). Add `-- --apply` to update; only rows still holding a value this project shipped are changed, an admin's own logo is kept. Take a backup first. |
 
 ## Rules enforced by the API (not only by the screens)
 

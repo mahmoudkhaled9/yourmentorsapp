@@ -7,6 +7,17 @@ yarn.lock
 .env
 .env.local
 .env.production
+.env.test
+.qa-mysql-setup.local.sql
+*.local.sql
+.dev-seed-accounts.local.txt
+
+# Database dumps contain real CRM data (users, e-mails, phones, password hashes): never commit them
+backups/
+*.sql.gz
+
+# Old copies of source files
+*.bak
 
 # Logs
 logs/

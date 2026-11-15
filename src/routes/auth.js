@@ -9,7 +9,7 @@ import { serializeUser, DEFAULT_USER_IMAGE } from '../domain/serializers.js';
 import { refreshReportsForUser } from '../domain/reports.js';
 import { nowSql } from '../lib/dates.js';
 
-const LOGIN_COLUMNS = 'id, name, email, phone, password, role, title, department, department_id, jobtitle_id, parent_id, status, image, created_at, updated_at';
+const LOGIN_COLUMNS = 'id, name, email, phone, password, role, title, department, department_id, jobtitle_id, parent_id, status, image, created_at, updated_at, password_changed_at';
 const PUBLIC_COLUMNS = 'id, name, email, phone, role, title, department, department_id, jobtitle_id, parent_id, status, image, created_at, updated_at';
 
 /** Accepts '' (reset to default), an http(s) URL, or a small base64 image data-URL. */
@@ -128,7 +128,9 @@ export function accountRoutes(ctx) {
     pwFailures.reset(key);
     await audit({ userId: me.id, entityType: 'users', entityId: me.id, action: 'password_changed', summary: 'Password changed' });
     // Every older token is now rejected (see authenticate); hand back a fresh one so this session continues.
-    res.json({ ok: true, token: tokens.issue({ id: me.id, role: me.role }) });
+    // the new token carries the new password version, read back exactly as authenticate() will read it
+    const fresh = await db.one('SELECT id, role, password_changed_at FROM users WHERE id = ?', [me.id]);
+    res.json({ ok: true, token: tokens.issue(fresh) });
   }));
 
   return router;

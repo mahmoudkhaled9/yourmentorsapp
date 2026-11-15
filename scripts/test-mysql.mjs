@@ -1,57 +1,74 @@
 // Runs the integration suites against a REAL MySQL server, in a brand-new temporary database.
-//  - Connection: TEST_DB_HOST/PORT/USER/PASSWORD (fall back to DB_HOST/PORT/USER/PASSWORD from .env).
-//  - Creates `mentors_crm_test_<UTC yyyymmddhhmmss>` (CREATE DATABASE without IF NOT EXISTS: if that name already exists the
-//    run stops before touching anything), runs the suites in it, then drops ONLY that database (--keep to inspect it).
-//  - Your configured database (DB_NAME, required) is only READ, twice: a row count per table before and after, to show
-//    the run did not change it. Nothing is ever written to it. Both snapshots are mandatory: if the first one fails the
-//    run stops BEFORE creating anything; if the last one fails the run fails.
-// Exit code: the test result (0 = all passed); 1 if a snapshot or a safety check failed; 2 if DB_NAME is missing or
-// MySQL is unreachable; 3 if the temporary database could not be removed; 130 if interrupted.
-import 'dotenv/config';
+//
+// Accounts (scripts/lib/qa-db.mjs, setup SQL in scripts/qa-mysql-setup.sql). QA credentials live in .env.test:
+//   DB_USER / DB_PASSWORD                    production account from .env: ONLY read-only row counts of DB_NAME
+//   TEST_DB_ADMIN_USER / TEST_DB_ADMIN_PASSWORD creates and drops `mentors_crm_test_<UTC yyyymmddhhmmss>`; never passed on
+//   TEST_DB_USER / TEST_DB_PASSWORD          the only credentials the test process receives (allow-listed environment)
+//
+// Steps: read-only snapshot of DB_NAME -> create the temp database (CREATE DATABASE without IF NOT EXISTS) -> prove the
+// test account reaches the temp database and NOT DB_NAME -> run the suites -> drop ONLY the database this run created
+// (--keep to inspect it) -> mandatory read-only snapshot of DB_NAME again.
+// Exit code: the test result (0 = all passed); 1 if a snapshot or a safety check failed; 2 if not configured or MySQL is
+// unreachable; 3 if the temporary database could not be removed; 130 if interrupted.
+import dotenv from 'dotenv';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import mysql from 'mysql2/promise';
+import { assertTempName, childEnv, resolveAccounts, tempDatabaseName } from './lib/qa-db.mjs';
 
-const TEMP_NAME = /^mentors_crm_test_\d{14}$/;
-const SYSTEM = new Set(['mysql', 'information_schema', 'performance_schema', 'sys']);
-const configured = String(process.env.DB_NAME ?? '').trim();
-if (!configured) {
-  console.error('DB_NAME is not set in .env: it names the real database this run must prove it did not touch. Nothing was done.');
+dotenv.config({ quiet: true });
+if (fs.existsSync('.env.test')) dotenv.config({ path: '.env.test', override: true, quiet: true });
+
+let accounts;
+try {
+  accounts = resolveAccounts(process.env);
+} catch (err) {
+  console.error(err.message);
   process.exit(2);
 }
-const cfg = {
-  host: process.env.TEST_DB_HOST ?? process.env.DB_HOST ?? '127.0.0.1',
-  port: Number(process.env.TEST_DB_PORT ?? process.env.DB_PORT ?? 3306),
-  user: process.env.TEST_DB_USER ?? process.env.DB_USER,
-  password: process.env.TEST_DB_PASSWORD ?? process.env.DB_PASSWORD,
-};
-const name = `mentors_crm_test_${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`;
+const { prod, admin, tester } = accounts;
+const configured = prod.database;
+const name = tempDatabaseName();
 const keep = process.argv.includes('--keep');
-
-/** Every statement that creates or drops a database goes through this check first. */
-function assertTempName(db, createdByThisRun) {
-  if (!TEMP_NAME.test(db)) throw new Error(`refusing: "${db}" is not a temporary test database name (mentors_crm_test_<14 digits>)`);
-  if (db === configured || SYSTEM.has(db.toLowerCase())) throw new Error(`refusing: "${db}" is a protected database`);
-  if (createdByThisRun !== undefined && createdByThisRun !== db) throw new Error(`refusing: "${db}" was not created by this run`);
-}
 const q = (id) => `\`${id}\``; // only ever called with names that passed assertTempName (letters, digits, underscore)
 
-/** Read-only: one SELECT COUNT(*) per table. Throws on any error (the snapshots are mandatory). */
-async function countRows(conn, db) {
-  const [tables] = await conn.query('SELECT TABLE_NAME AS t FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = ? ORDER BY TABLE_NAME', [db, 'BASE TABLE']);
-  const counts = {};
-  for (const { t } of tables) {
-    const [[row]] = await conn.query('SELECT COUNT(*) AS n FROM ??.??', [db, t]); // read-only
-    counts[t] = Number(row.n);
+/** Read-only: one SELECT COUNT(*) per table, inside a READ ONLY transaction. Throws on any error (mandatory). */
+async function countRows() {
+  const conn = await mysql.createConnection({ host: prod.host, port: prod.port, user: prod.user, password: prod.password });
+  try {
+    await conn.query('START TRANSACTION READ ONLY');
+    const [tables] = await conn.query('SELECT TABLE_NAME AS t FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = ? ORDER BY TABLE_NAME', [configured, 'BASE TABLE']);
+    if (!tables.length) throw new Error(`"${configured}" has no tables or this account cannot see it`);
+    const counts = {};
+    for (const { t } of tables) {
+      const [[row]] = await conn.query('SELECT COUNT(*) AS n FROM ??.??', [configured, t]);
+      counts[t] = Number(row.n);
+    }
+    await conn.query('ROLLBACK');
+    return counts;
+  } finally {
+    await conn.end().catch(() => {});
   }
-  return counts;
+}
+
+/** The test account must land in the temporary database and must not be able to see the real one. */
+async function proveTesterIsolated() {
+  const conn = await mysql.createConnection({ ...tester, database: name });
+  try {
+    const [[row]] = await conn.query('SELECT DATABASE() AS db');
+    if (row.db !== name) throw new Error(`test account connected to "${row.db}", expected ${name}`);
+    const [[real]] = await conn.query('SELECT COUNT(*) AS n FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?', [configured]);
+    if (Number(real.n)) throw new Error(`the test account "${tester.user}" can see "${configured}": restrict it to mentors_crm_test_% (scripts/qa-mysql-setup.sql)`);
+  } finally {
+    await conn.end().catch(() => {});
+  }
 }
 
 let conn;
 try {
-  conn = await mysql.createConnection(cfg); // no default database: nothing runs "inside" your real database by accident
+  conn = await mysql.createConnection({ host: admin.host, port: admin.port, user: admin.user, password: admin.password }); // no default database
 } catch (err) {
-  console.error(`Cannot connect to MySQL at ${cfg.host}:${cfg.port}: ${err.code ?? 'connection error'}`);
+  console.error(`Cannot connect to MySQL at ${admin.host}:${admin.port} as the QA admin account: ${err.code ?? 'connection error'}`);
   process.exit(2);
 }
 
@@ -65,37 +82,30 @@ process.on('SIGINT', onSignal);
 process.on('SIGTERM', onSignal);
 
 try {
-  const [[real]] = await conn.query('SELECT COUNT(*) AS n FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?', [configured]);
-  if (!Number(real.n)) throw new Error(`the configured database "${configured}" does not exist on ${cfg.host}:${cfg.port} - nothing was created`);
   try {
-    before = await countRows(conn, configured);
+    before = await countRows();
   } catch (err) {
     throw new Error(`the read-only snapshot of "${configured}" failed (${err.code ?? err.message}) - stopping before creating anything`);
   }
   console.log(`read-only snapshot of "${configured}": ${Object.keys(before).length} tables`);
 
-  assertTempName(name);
+  assertTempName(name, { configured });
   const [[exists]] = await conn.query('SELECT COUNT(*) AS n FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?', [name]);
   if (Number(exists.n)) throw new Error(`"${name}" already exists - not touching it; run again in a second`);
   await conn.query(`CREATE DATABASE ${q(name)} CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci`);
   created = name; // from here on, and only now, cleanup may drop it
   const [[tables]] = await conn.query('SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?', [name]);
   if (Number(tables.n)) throw new Error(`"${name}" is not empty after creation`);
-  console.log(`created temporary test database ${name} on ${cfg.host}:${cfg.port}`);
+  console.log(`created temporary test database ${name} on ${admin.host}:${admin.port}`);
+
+  await proveTesterIsolated();
+  console.log(`test account "${tester.user}" reaches ${name} and cannot see "${configured}"`);
 
   if (!interrupted) {
-    if (name === configured || !TEMP_NAME.test(name)) throw new Error('refusing to run the tests outside the temporary database');
-    // DB_* point at the temporary database too, so even code that reads the normal connection settings can only reach it.
-    const env = {
-      ...process.env,
-      TEST_DB: 'mysql', TEST_DB_NAME: name, TEST_DB_HOST: cfg.host, TEST_DB_PORT: String(cfg.port), TEST_DB_USER: cfg.user ?? '', TEST_DB_PASSWORD: cfg.password ?? '',
-      DB_NAME: name, DB_HOST: cfg.host, DB_PORT: String(cfg.port), DB_USER: cfg.user ?? '', DB_PASSWORD: cfg.password ?? '',
-    };
-    // the same files as `npm run test:integration` (a bare folder argument is not run by node --test)
     const files = fs.readdirSync('test/integration').filter((f) => f.endsWith('.test.js')).sort().map((f) => `test/integration/${f}`);
     if (!files.length) throw new Error('no test files found in test/integration');
     console.log(`running ${files.length} integration suites: ${files.map((f) => f.split('/').pop()).join(', ')}`);
-    child = spawn(process.execPath, ['--test', '--test-concurrency=1', ...files], { stdio: 'inherit', env });
+    child = spawn(process.execPath, ['--test', '--test-concurrency=1', ...files], { stdio: 'inherit', env: childEnv(process.env, { tester, database: name }) });
     exitCode = await new Promise((resolve) => {
       child.on('exit', (code) => resolve(code ?? 1)); // killed by a signal = failure
       child.on('error', () => resolve(1));
@@ -109,7 +119,7 @@ try {
     console.log(`kept ${created} (drop it yourself when done: DROP DATABASE \`${created}\`;)`);
   } else if (created) {
     try {
-      assertTempName(created, name);
+      assertTempName(created, { configured, createdByThisRun: name });
       await conn.query(`DROP DATABASE ${q(created)}`);
       const [[left]] = await conn.query('SELECT COUNT(*) AS n FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?', [created]);
       if (Number(left.n)) throw new Error('still present');
@@ -122,7 +132,7 @@ try {
   if (before) {
     // mandatory final snapshot (also after an error): the run must be able to show the real database is unchanged
     try {
-      const after = await countRows(conn, configured);
+      const after = await countRows();
       const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((t) => before[t] !== after[t]);
       console.log(changed.length
         ? `NOTE: row counts in "${configured}" changed during the run (${changed.join(', ')}) - expected only if someone used the app meanwhile`

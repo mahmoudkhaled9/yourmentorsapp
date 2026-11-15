@@ -330,6 +330,10 @@ test('deals: create / partial update / validate / delete, legacy columns filled'
     { leadName: 'x', amount: -5 }, { leadName: 'x', amount: 'abc' }, { leadName: 'x', amount: 1e12 }, { leadName: 'x', contractDate: 'nope' }, {},
     { leadName: 'x', agentId: 99999 }, { leadName: 'x', attachments: 'nope' }, { leadName: 'x', status: 'stolen' },
     { leadName: 'x', attachments: [{ name: 'x.html', url: 'data:text/html;base64,PHNjcmlwdD4=' }] },
+    // every link field is checked: a harmless dataUrl must not smuggle a javascript: / html url (the UI opens `url`)
+    { leadName: 'x', attachments: [{ name: 'a.png', dataUrl: 'data:image/png;base64,AAAA', url: 'javascript:alert(1)' }] },
+    { leadName: 'x', attachments: [{ name: 'a.png', url: 'https://ok.example/a.png', data: 'data:text/html;base64,PHNjcmlwdD4=' }] },
+    { leadName: 'x', attachments: [{ name: 'a.png' }] },
     { leadName: 'x', amount: 100, commission: 200 },
   ];
   for (const b of bad) assert.equal((await app.api.post('/api/deals', b, app.adminToken)).status, 400, JSON.stringify(b));

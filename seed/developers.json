@@ -2,7 +2,6 @@
   {
     "id": 1,
     "name": "Ora",
-    "logo": "/developers/ora.jpg",
     "description": "Ora is a developer with an ethos to deliver unmatched experiences that embody human aspirations of self-fulfillment, and the pinnacle of happiness through a sensorial approach that can only be described as a surreal yet perfect moment of lifetime in luxury living.",
     "phone": "01021128292",
     "whatsapp": "01021128292",
@@ -59,7 +58,6 @@
   {
     "id": 6,
     "name": "Horizon Egypt",
-    "logo": "/developers/horizon.jpg",
     "description": "Horizon Egypt Developments creates exceptional living spaces with a focus on quality and innovation.",
     "phone": "01099887766",
     "whatsapp": "01099887766",
@@ -70,7 +68,6 @@
   {
     "id": 7,
     "name": "AL-Marasem",
-    "logo": "",
     "description": "AL-Marasem Development delivers premium residential projects with attention to detail and quality.",
     "phone": "01033445566",
     "whatsapp": "01033445566",
@@ -81,7 +78,7 @@
   {
     "id": 8,
     "name": "Al Ahly Sabbour",
-    "logo": "",
+    "logo": "/developers/al-ahly-sabbour.jpg",
     "description": "Al Ahly Sabbour Developments is a partnership between Al Ahly Capital and Sabbour Associates.",
     "phone": "01077889900",
     "whatsapp": "01077889900",

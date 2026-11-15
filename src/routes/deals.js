@@ -37,11 +37,17 @@ export function dealRoutes(ctx) {
       if (!Array.isArray(value) || value.length > 50) return v.fail(field, 'must be a list with at most 50 items');
       for (const item of value) {
         if (!item || typeof item !== 'object' || typeof item.name !== 'string') return v.fail(field, 'every item needs a name');
-        const data = item.dataUrl ?? item.data ?? item.url;
-        if (typeof data !== 'string' || !/^(data:[\w.+-]+\/[\w.+-]+;base64,|https?:\/\/)/.test(data)) return v.fail(field, 'every item needs a file (data URL) or an http(s) link');
-        // files that a browser would execute when opened are refused (stored XSS through an attachment link)
-        if (/^data:(text\/html|image\/svg\+xml|application\/(xhtml\+xml|javascript|x-javascript)|text\/javascript|text\/xml|application\/xml)/i.test(data)) {
-          return v.fail(field, 'HTML, SVG, XML and script files cannot be attached');
+        // EVERY link field that is present is checked, not only the first one: the frontend opens `url`, so a harmless
+        // `dataUrl` next to `url: "javascript:..."` must not slip through (stored XSS through an attachment link).
+        const links = ['dataUrl', 'data', 'url'].filter((k) => item[k] !== undefined && item[k] !== null);
+        if (!links.length) return v.fail(field, 'every item needs a file (data URL) or an http(s) link');
+        for (const k of links) {
+          const data = item[k];
+          if (typeof data !== 'string' || !/^(data:[\w.+-]+\/[\w.+-]+;base64,|https?:\/\/)/.test(data)) return v.fail(field, 'every item needs a file (data URL) or an http(s) link');
+          // files that a browser would execute when opened are refused
+          if (/^data:(text\/html|image\/svg\+xml|application\/(xhtml\+xml|javascript|x-javascript)|text\/javascript|text\/xml|application\/xml)/i.test(data)) {
+            return v.fail(field, 'HTML, SVG, XML and script files cannot be attached');
+          }
         }
       }
       return value;

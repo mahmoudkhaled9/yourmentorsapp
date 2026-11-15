@@ -4,6 +4,7 @@ import express from 'express';
 import helmet from 'helmet';
 import { unauthorized } from './errors.js';
 import { isActiveUser } from '../auth/policy.js';
+import { passwordVersion } from '../auth/tokens.js';
 
 /** Assigns a request id (honours a sane inbound X-Request-Id) and writes one access-log line per request. */
 export function requestContext({ logger }) {
@@ -126,12 +127,11 @@ export function authenticate({ db, tokens, userColumns }) {
       const user = await db.one(`SELECT ${userColumns} FROM users WHERE id = ? LIMIT 1`, [userId]);
       if (!user) throw unauthorized('Account no longer exists', 'TOKEN_INVALID');
       if (!isActiveUser(user)) throw unauthorized('This account is disabled', 'ACCOUNT_DISABLED');
-      if (user.password_changed_at) {
-        const changedAtSec = Math.floor(new Date(user.password_changed_at).getTime() / 1000);
-        if (Number.isFinite(changedAtSec) && Number(payload.iat) < changedAtSec) {
-          throw unauthorized('Your password was changed, please sign in again', 'SESSION_REVOKED');
-        }
-      }
+      const version = passwordVersion(user);
+      // Tokens carry the password version they were issued for and must match it exactly (a change in the same second
+      // as the token's iat is still a change). Tokens issued before `pwv` existed keep the older iat rule.
+      const revoked = payload.pwv !== undefined ? Number(payload.pwv) !== version : version > 0 && Number(payload.iat) < version;
+      if (revoked) throw unauthorized('Your password was changed, please sign in again', 'SESSION_REVOKED');
       req.auth = payload;
       req.currentUser = user;
       next();

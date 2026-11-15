@@ -119,6 +119,34 @@ test('change password: wrong current -> 400 (not 401), weak -> 400, success rota
   assert.equal((await app.api.post('/api/auth/login', { email: u.email, password: 'Brand-New-Pass-7' })).status, 200);
 });
 
+test('a password change revokes a token issued in the SAME second (no sleep; the old iat-only rule let it through)', async () => {
+  const u = await app.createUser({ password: 'Same-Second-Pass-1' });
+  const ok = await app.api.post('/api/auth/change-password', { currentPassword: 'Same-Second-Pass-1', newPassword: 'Same-Second-Pass-2' }, u.token);
+  assert.equal(ok.status, 200);
+  // force the exact case: the change is recorded in the very second the old token was issued
+  const { iat } = jwt.decode(u.token);
+  const sameSecond = new Date(iat * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  await app.ctx.db.exec('UPDATE users SET password_changed_at = ? WHERE id = ?', [sameSecond, u.id]);
+  const old = await app.api.get('/api/auth/me', u.token);
+  assert.equal(old.status, 401, 'the token from before the change must stop working');
+  assert.equal(old.body.code, 'SESSION_REVOKED');
+  const fresh = (await app.api.post('/api/auth/login', { email: u.email, password: 'Same-Second-Pass-2' })).body.token;
+  assert.equal(jwt.decode(fresh).pwv, iat, 'new tokens carry the current password version');
+  assert.equal((await app.api.get('/api/auth/me', fresh)).status, 200);
+});
+
+test('tokens issued before the password-version claim existed keep working until a later password change', async () => {
+  const u = await app.createUser({ password: 'Legacy-Token-Pass-1' });
+  const secret = testEnv().JWT_SECRET;
+  const legacy = (iat) => jwt.sign({ sub: String(u.id), role: 'agent', iat }, secret, { algorithm: 'HS256', expiresIn: '1h' });
+  const now = Math.floor(Date.now() / 1000);
+  assert.equal((await app.api.get('/api/auth/me', legacy(now))).status, 200, 'never changed: an old-style token is fine');
+  const changedAt = new Date((now - 60) * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  await app.ctx.db.exec('UPDATE users SET password_changed_at = ? WHERE id = ?', [changedAt, u.id]);
+  assert.equal((await app.api.get('/api/auth/me', legacy(now))).status, 200, 'issued after the change: still valid');
+  assert.equal((await app.api.get('/api/auth/me', legacy(now - 120))).status, 401, 'issued before the change: revoked');
+});
+
 test("admin resetting a password revokes the user's old sessions too", async () => {
   const u = await app.createUser();
   await sleep(1100);

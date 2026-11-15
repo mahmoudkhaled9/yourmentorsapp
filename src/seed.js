@@ -66,7 +66,15 @@ export async function seedBaseData(ctx) {
     const cols = Object.keys(row);
     await db.exec(`INSERT INTO developers (${cols.map((c) => `\`${c}\``).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, cols.map((c) => row[c]));
   }
-  await seedIfEmpty(ctx, 'projects', (projects ?? []).map((p) => dated({ id: p.id, name: p.name, developer_id: p.developerId ?? null, developerId: p.developerId ?? null })));
+  // Referential consistency: a seed project never points at a developer that does not exist (that is how the orphan
+  // "project 13 -> developer 9" looked). Unknown developers are stored as "no developer" and reported.
+  const developerIds = new Set((await db.rows('SELECT id FROM developers')).map((r) => Number(r.id)));
+  const projectRows = (projects ?? []).map((p) => {
+    const developerId = p.developerId && developerIds.has(Number(p.developerId)) ? Number(p.developerId) : null;
+    if (p.developerId && developerId === null) logger.warn(`seed project "${p.name}" refers to missing developer #${p.developerId}: stored without a developer`);
+    return dated({ id: p.id, name: p.name, developer_id: developerId, developerId });
+  });
+  await seedIfEmpty(ctx, 'projects', projectRows);
   if (agentCare) await seedIfEmpty(ctx, 'agent_care', [{ id: agentCare.id, name: agentCare.name, phone: agentCare.phone, whatsapp: agentCare.whatsapp, email: agentCare.email }]);
   // One-time backfill: reports are derived from comments; an empty reports table with existing comments means an upgrade.
   if (schema.hasTable('reports')) {
