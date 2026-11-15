@@ -24,13 +24,18 @@ export function userRoutes(ctx) {
     const row = await run.one('SELECT id FROM users WHERE LOWER(email) = ? AND id <> ? LIMIT 1', [String(email).toLowerCase(), exceptId ?? 0]);
     if (row) throw conflict('A user with this email already exists', 'EMAIL_TAKEN', [{ field: 'email', message: 'is already used by another account' }]);
   }
-  async function assertParentValid(run, parentId, selfId = null) {
+  /** currentParentId: the manager the user already has; keeping it is allowed even if that manager was deactivated since. */
+  async function assertParentValid(run, parentId, selfId = null, currentParentId = null) {
     if (parentId === undefined || parentId === null) return;
     if (selfId !== null) {
       if (Number(parentId) === Number(selfId)) throw badRequest('A user cannot report to themselves');
       if ((await descendantsOf(run, selfId)).has(Number(parentId))) throw badRequest('This would create a reporting loop (the chosen manager already reports to this user)');
     }
-    if (!(await run.one('SELECT id FROM users WHERE id = ?', [parentId]))) throw badRequest('The selected team leader / manager does not exist');
+    const parent = await run.one('SELECT id, status FROM users WHERE id = ?', [parentId]);
+    if (!parent) throw badRequest('The selected team leader / manager does not exist');
+    if (Number(parent.status ?? 1) !== 1 && Number(parentId) !== Number(currentParentId)) {
+      throw badRequest('The selected team leader / manager is not active', [{ field: 'teamLeaderId', message: 'is not active' }]);
+    }
   }
   async function assertRefExists(run, table, id, label) {
     if (id === undefined || id === null || !schema.hasTable(table)) return;
@@ -122,7 +127,7 @@ export function userRoutes(ctx) {
       if (Number(actor.id) === id && !nextActive) throw conflict('You cannot disable your own account', 'SELF_LOCKOUT');
       if (wasSuper && !staysSuper) await assertAnotherSuperRemains(tx, id);
       if (email !== undefined && email !== String(existing.email).toLowerCase()) await assertEmailFree(tx, email, id);
-      if (parentProvided) await assertParentValid(tx, parentId ?? null, id);
+      if (parentProvided) await assertParentValid(tx, parentId ?? null, id, existing.parent_id ?? null);
       await assertRefExists(tx, 'departments', departmentId, 'department');
       await assertRefExists(tx, 'jobtitles', jobtitleId, 'job title');
       const now = nowSql();

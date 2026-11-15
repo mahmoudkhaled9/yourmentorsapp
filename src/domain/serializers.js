@@ -2,7 +2,7 @@ import { toDateOnly, toIso } from '../lib/dates.js';
 
 export const DEFAULT_USER_IMAGE = 'https://www.pngitem.com/pimgs/m/35-350426_profile-icon-png-default-profile-picture-png-transparent.png';
 
-const isPotentialName = (name) => {
+export const isPotentialName = (name) => {
   const n = String(name ?? '').toLowerCase();
   return n.includes('potential') && !n.includes('non');
 };

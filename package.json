@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "backend:status": "bash scripts/backend-process.sh status",
+    "backend:restart": "bash scripts/backend-process.sh restart",
     "dev:demo": "node test/support/dev-server.js --demo --port 4011",
     "gen-secret": "node scripts/gen-secret.mjs",
     "check": "node scripts/check-syntax.mjs",

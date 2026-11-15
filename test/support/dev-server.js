@@ -55,7 +55,7 @@ if (process.argv.includes('--demo')) {
   for (const [i, name] of names.entries()) {
     const lead = await call('POST', 'leads', {
       name, phone: `011${String(20000000 + i * 137).padStart(8, '0')}`, statusId: (i % 8) + 1, projectId: (i % 10) + 1, source: ['Meta', 'Website', 'Referral'][i % 3], assignedToId: owners[i],
-      requirements: { destinationIds: [opts.destinations[i % 6].id], propertyTypeIds: [opts.propertyTypes[i % 9].id], budgetMin: 2000000 + i * 250000, budgetMax: 4000000 + i * 500000, delivery: opts.delivery[i % 5].value, finishing: opts.finishing[i % 3].value, purpose: opts.purpose[i % 3].value },
+      requirements: { destinationIds: [opts.destinations[i % 6].id], propertyTypeIds: [opts.propertyTypes[i % 9].id], budgetMin: 2000000 + i * 250000, budgetMax: 4000000 + i * 500000, delivery: opts.delivery[i % 5].value, finishing: opts.finishing[i % 3].value, purpose: opts.purpose[i % 2].value },
     }, admin);
     await call('POST', 'comments', { entityType: 'lead', entityId: lead.id, content: `First call with ${name}: interested, send brochure.` }, admin).catch(() => {});
   }

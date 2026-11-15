@@ -121,7 +121,12 @@ export class Validator {
 }
 
 /** Request bodies must be plain objects; anything else is treated as empty. */
-export const bodyOf = (req) => (req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {});
+/** The request body of an endpoint. Every endpoint takes a JSON object: a list used to be ignored silently (the request
+ *  "succeeded" without doing anything), so it is refused now. No body at all is an empty object. */
+export const bodyOf = (req) => {
+  if (Array.isArray(req.body)) throw badRequest('The request body must be a JSON object, not a list');
+  return req.body && typeof req.body === 'object' ? req.body : {};
+};
 
 /** Route parameter -> positive integer id (400 otherwise). */
 export function parseId(raw, name = 'id') {

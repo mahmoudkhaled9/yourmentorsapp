@@ -7,7 +7,7 @@ import { insertRow } from '../db.js';
 import { redact } from '../domain/audit.js';
 
 /**
- * Secondary resources (API only - the current UI does not use them): tasks, calendar events, call history, pipeline,
+ * Secondary resources (API only - the current UI does not use them): tasks, calendar events, pipeline,
  * knowledge base, notifications, plus the activity log. Owner-scoped like the main records; knowledge base is
  * read-by-all / write-by-admin; notifications are private to their owner.
  */
@@ -30,12 +30,7 @@ const RESOURCES = [
       ['leadId', 'int', { col: 'lead_id' }], ['coldCallId', 'int', { col: 'cold_call_id' }], ['dealId', 'int', { col: 'deal_id' }], ['userId', 'int', { col: 'user_id', owner: true }]],
     serialize: (r) => ({ id: r.id, title: r.title, type: r.type ?? '', notes: r.notes ?? '', startAt: toIso(r.start_at), endAt: toIso(r.end_at), dueDate: toDateOnly(r.due_date), leadId: r.lead_id ?? null, coldCallId: r.cold_call_id ?? null, dealId: r.deal_id ?? null, userId: r.user_id ?? null }),
   },
-  {
-    route: 'call-history', table: 'call_history', owner: 'user_id', order: 'COALESCE(call_at, created_at) DESC',
-    fields: [['leadId', 'int', { col: 'lead_id' }], ['coldCallId', 'int', { col: 'cold_call_id' }], ['userId', 'int', { col: 'user_id', owner: true }],
-      ['result', 'string', { max: 100 }], ['notes', 'string', { max: 5000 }], ['callAt', 'datetime', { col: 'call_at' }]],
-    serialize: (r) => ({ id: r.id, leadId: r.lead_id ?? null, coldCallId: r.cold_call_id ?? null, userId: r.user_id ?? null, result: r.result ?? '', notes: r.notes ?? '', callAt: toIso(r.call_at) }),
-  },
+  // call-history is served by routes/callActions.js (one validated way to log a call: the Call Action)
   {
     route: 'pipeline', table: 'pipeline', owner: 'owner_id', order: 'id DESC',
     fields: [['title', 'string', { required: true, max: 255 }], ['stage', 'string', { max: 100 }], ['value', 'money', { max: 9999999999.99 }],

@@ -6,9 +6,10 @@ import * as passwords from './004_password_hardening.js';
 import * as sequences from './005_id_sequences.js';
 import * as requirements from './006_crm_requirements.js';
 import * as projectDetails from './007_project_details.js';
+import * as callActions from './008_call_actions.js';
 import { nowSql } from '../lib/dates.js';
 
-export const MIGRATIONS = [base, legacy, indexes, emailUnique, passwords, sequences, requirements, projectDetails];
+export const MIGRATIONS = [base, legacy, indexes, emailUnique, passwords, sequences, requirements, projectDetails, callActions];
 const LOCK = 'mentors_crm_migrations';
 
 /**

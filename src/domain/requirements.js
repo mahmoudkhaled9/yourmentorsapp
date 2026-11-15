@@ -6,15 +6,23 @@ import { inClause } from './lookups.js';
  * Client requirements of a lead.  Fixed choice lists live here (they drive business logic); the open-ended lists
  * (destinations, property types) are database tables managed from the admin panel.
  */
+// Exactly the choices the business asked for, in this order (Delivery / Finishing / Purpose of purchase).
 export const DELIVERY_OPTIONS = ['ready_to_move', 'within_1_year', 'within_2_years', 'within_3_years', 'within_4_years'];
-export const FINISHING_OPTIONS = ['fully_finished', 'semi_finished', 'core_and_shell'];
-export const PURPOSE_OPTIONS = ['investment', 'personal_living', 'upgrading'];
+export const FINISHING_OPTIONS = ['core_and_shell', 'semi_finished', 'fully_finished'];
+export const PURPOSE_OPTIONS = ['end_user', 'investment'];
+/**
+ * Purposes offered before the list was reduced to End User / Investment. Existing leads keep them (never rewritten) and
+ * they are shown as "(old option)"; they are no longer offered in forms and a call action cannot pick them.
+ */
+export const LEGACY_PURPOSES = ['personal_living', 'upgrading'];
+export const STORED_PURPOSES = [...PURPOSE_OPTIONS, ...LEGACY_PURPOSES];
 export const OPTION_LABELS = {
-  ready_to_move: 'Ready to Move', within_1_year: 'Delivery within 1 year', within_2_years: 'Delivery within 2 years',
-  within_3_years: 'Delivery within 3 years', within_4_years: 'Delivery within 4 years',
-  fully_finished: 'Fully Finished', semi_finished: 'Semi Finished', core_and_shell: 'Core & Shell',
-  investment: 'Investment', personal_living: 'Personal Living', upgrading: 'Upgrading',
+  ready_to_move: 'RTM', within_1_year: '1 Year', within_2_years: '2 Years', within_3_years: '3 Years', within_4_years: '4 Years',
+  core_and_shell: 'Core & Shell', semi_finished: 'Semi-Finished', fully_finished: 'Fully Finished',
+  end_user: 'End User', investment: 'Investment',
+  personal_living: 'Personal Living (old option)', upgrading: 'Upgrading (old option)',
 };
+export const optionLabel = (value) => (value ? OPTION_LABELS[value] ?? value : null);
 
 export const EMPTY_REQUIREMENTS = Object.freeze({
   destinationIds: [], propertyTypeIds: [], budgetMin: null, budgetMax: null, delivery: null,
@@ -35,7 +43,8 @@ export function parseRequirements(raw, v) {
     finishing: v.oneOf(raw.finishing, 'requirements.finishing', FINISHING_OPTIONS) ?? null,
     downPayment: v.money(raw.downPayment, 'requirements.downPayment', { max: 999999999999 }) ?? null,
     installmentPerQuarter: v.money(raw.installmentPerQuarter, 'requirements.installmentPerQuarter', { max: 999999999999 }) ?? null,
-    purpose: v.oneOf(raw.purpose, 'requirements.purpose', PURPOSE_OPTIONS) ?? null,
+    // a lead that already holds an old purpose can be saved unchanged; new values must be End User / Investment
+    purpose: v.oneOf(raw.purpose, 'requirements.purpose', STORED_PURPOSES) ?? null,
   };
   if (out.budgetMin !== null && out.budgetMax !== null && out.budgetMin > out.budgetMax) {
     v.fail('requirements.budgetMax', 'must be greater than or equal to the minimum budget');
@@ -65,6 +74,9 @@ async function checkOptions(tx, table, ids, alreadyLinked, label) {
 export async function saveRequirements(tx, leadId, req) {
   const current = await loadRequirements(tx, [leadId]);
   const before = current.get(Number(leadId)) ?? EMPTY_REQUIREMENTS;
+  if (req && LEGACY_PURPOSES.includes(req.purpose) && req.purpose !== before.purpose) {
+    throw badRequest('Purpose of purchase must be End User or Investment', [{ field: 'requirements.purpose', message: 'must be End User or Investment' }]);
+  }
   await tx.exec('DELETE FROM lead_requirement_destinations WHERE lead_id = ?', [leadId]);
   await tx.exec('DELETE FROM lead_requirement_property_types WHERE lead_id = ?', [leadId]);
   await tx.exec('DELETE FROM lead_requirements WHERE lead_id = ?', [leadId]);
@@ -126,7 +138,7 @@ export function requirementFilters(query, v) {
   const params = [];
   const destinationId = v.int(query.destinationId, 'destinationId', { min: 1 });
   const propertyTypeId = v.int(query.propertyTypeId, 'propertyTypeId', { min: 1 });
-  const purpose = v.oneOf(query.purpose, 'purpose', PURPOSE_OPTIONS);
+  const purpose = v.oneOf(query.purpose, 'purpose', STORED_PURPOSES);
   const finishing = v.oneOf(query.finishing, 'finishing', FINISHING_OPTIONS);
   const delivery = v.oneOf(query.delivery, 'delivery', DELIVERY_OPTIONS);
   const budget = v.money(query.budget, 'budget', { max: 999999999999 });

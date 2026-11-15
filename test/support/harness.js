@@ -50,6 +50,14 @@ export async function startTestApp({ env = {}, latencyMs = 0, logger, prepare, a
   const config = loadConfig(testEnv(env));
   const pool = schema === 'mysql' ? mysqlTestPool() : createSqlitePool({ schemaSql: schema === 'canonical' ? '' : LEGACY_SQL(), latencyMs });
   logger ??= createLogger({ level: 'silent' });
+  if (schema === 'mysql') {
+    // Second guard, at run time: the connection must really be inside the temporary test database before anything runs.
+    const [[row]] = await pool.query('SELECT DATABASE() AS db');
+    if (row.db !== process.env.TEST_DB_NAME || !/_test(_\w+)?$/.test(String(row.db))) {
+      await pool.end();
+      throw new Error(`Refusing to run tests: connected to "${row.db}", expected the temporary test database.`);
+    }
+  }
   if (prepare) await prepare(pool);
   const ctx = await createContext({ config, pool, logger, waitForDb: schema === 'mysql' });
   const app = createApp(ctx);
