@@ -1,6 +1,5 @@
-# Dependencies
+# Dependencies (package-lock.json IS committed: production installs use `npm ci`)
 node_modules/
-package-lock.json
 yarn.lock
 
 # Environment variables
