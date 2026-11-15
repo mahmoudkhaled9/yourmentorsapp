@@ -27,7 +27,8 @@
     "backup": "node scripts/export-backup.mjs",
     "backup:portable": "node scripts/export-backup.mjs --portable",
     "restore": "node scripts/restore-backup.mjs",
-    "fix:developer-logos": "node scripts/fix-developer-logos.mjs"
+    "fix:developer-logos": "node scripts/fix-developer-logos.mjs",
+    "fix:deal-commissions": "node scripts/fix-deal-commissions.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

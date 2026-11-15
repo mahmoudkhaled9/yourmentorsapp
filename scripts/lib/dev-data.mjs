@@ -97,8 +97,8 @@ export async function seedDemoCompany(call, { password, includeAdmin = false } =
   const dealPhones = new Set((await call('GET', 'deals')).map((d) => d.clientPhone));
   const dealProject = (i) => pick(projects, i);
   const deals = [
-    { leadName: LEAD_NAMES[0], clientPhone: leadPhone(0), agentId: agent, amount: 5200000, commission: 104000, status: 'approved', stage: 'Contracted', contractDate: '2026-10-01', p: 0 },
-    { leadName: LEAD_NAMES[3], clientPhone: leadPhone(3), agentId: agent2, amount: 3100000, commission: 62000, status: 'pending', stage: 'Reservation', p: 2 },
+    { leadName: LEAD_NAMES[0], clientPhone: leadPhone(0), agentId: agent, amount: 5200000, status: 'approved', stage: 'Contracted', contractDate: '2026-10-01', p: 0 },
+    { leadName: LEAD_NAMES[3], clientPhone: leadPhone(3), agentId: agent2, amount: 3100000, status: 'pending', stage: 'Reservation', p: 2 },
   ];
   for (const { p, ...deal } of deals) {
     if (dealPhones.has(deal.clientPhone)) continue;

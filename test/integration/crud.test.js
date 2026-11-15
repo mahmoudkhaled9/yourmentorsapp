@@ -334,7 +334,6 @@ test('deals: create / partial update / validate / delete, legacy columns filled'
     { leadName: 'x', attachments: [{ name: 'a.png', dataUrl: 'data:image/png;base64,AAAA', url: 'javascript:alert(1)' }] },
     { leadName: 'x', attachments: [{ name: 'a.png', url: 'https://ok.example/a.png', data: 'data:text/html;base64,PHNjcmlwdD4=' }] },
     { leadName: 'x', attachments: [{ name: 'a.png' }] },
-    { leadName: 'x', amount: 100, commission: 200 },
   ];
   for (const b of bad) assert.equal((await app.api.post('/api/deals', b, app.adminToken)).status, 400, JSON.stringify(b));
   const r = await app.api.post('/api/deals', {
@@ -347,15 +346,84 @@ test('deals: create / partial update / validate / delete, legacy columns filled'
   assert.equal(d.leadName, 'Big Deal'); assert.equal(d.amount, 3500000); assert.equal(d.agentName, A1.name); assert.equal(d.projectName, 'SilverSands');
   assert.equal(d.reservationDate, '2026-02-01'); assert.equal(d.contractDate, '2026-03-01'); assert.equal(d.attachments.length, 1);
   assert.equal(d.leadId, r.body.id);
+  // commission = 5,000 EGP per million of the deal value; the 70,000 the client sent is ignored
+  assert.equal(d.commission, 17500);
   const upd = await app.api.put(`/api/deals/${r.body.id}`, { commission: 99000, status: 'rejected' }, app.adminToken);
   assert.equal(upd.status, 200, JSON.stringify(upd.body));
-  assert.equal(upd.body.item.commission, 99000);
+  assert.equal(upd.body.item.commission, 17500, 'a commission sent by a client cannot override the rule');
   assert.equal(upd.body.item.status, 'rejected');
   assert.equal(upd.body.item.leadName, 'Big Deal');
   assert.equal(upd.body.item.agentId, A1.id);
   assert.equal(upd.body.item.attachments.length, 1);
+  // changing the deal value recalculates the commission
+  const repriced = await app.api.put(`/api/deals/${r.body.id}`, { contractPrice: 10000000 }, app.adminToken);
+  assert.equal(repriced.body.item.amount, 10000000);
+  assert.equal(repriced.body.item.commission, 50000);
   assert.equal((await app.api.del(`/api/deals/${r.body.id}`, app.adminToken)).status, 200);
   assert.equal((await app.api.del(`/api/deals/${r.body.id}`, app.adminToken)).status, 404);
+});
+
+test('commission rule: 5,000 EGP per million of the deal value, for agents only; totals add up the same way', async () => {
+  const make = (body) => app.api.post('/api/deals', { leadName: 'Commission Check', clientPhone: app.uniquePhone(), commission: 999999, ...body }, app.adminToken);
+  const ids = [];
+  const users = [];
+  try {
+    // agents: the rule (a commission sent by the client is ignored)
+    const agentCases = [[{ amount: 5000000 }, 25000], [{ amount: 10000000 }, 50000], [{ amount: 1000000 }, 5000], [{ amount: 5200000 }, 26000],
+      [{ amount: 3100000 }, 15500], [{ amount: 1234567 }, 6172.84], [{ amount: 2000000, contractPrice: 6000000 }, 30000]];
+    for (const [body, expected] of agentCases) {
+      const r = await make({ ...body, agentId: A1.id });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      ids.push(r.body.id);
+      assert.equal(r.body.item.commission, expected, `agent ${JSON.stringify(body)} -> ${expected}`);
+    }
+    // every other role: no commission
+    const others = [T];
+    for (const role of ['sales_supervisor', 'sales_manager', 'director', 'franchise_owner']) {
+      const u = await app.createUser({ role });
+      users.push(u);
+      others.push(u);
+    }
+    for (const seller of others) {
+      const r = await make({ amount: 5000000, agentId: seller.id });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      ids.push(r.body.id);
+      assert.equal(r.body.item.commission, 0, `a deal sold by a ${seller.role ?? 'team_leader'} carries no commission`);
+    }
+    const byAdmin = await make({ amount: 5000000 }); // no seller given: the administrator who created it
+    ids.push(byAdmin.body.id);
+    assert.equal(byAdmin.body.item.commission, 0, 'administrators earn no commission');
+
+    const listed = (await app.api.get('/api/deals', app.adminToken)).body.filter((d) => ids.includes(d.id));
+    const total = Math.round(listed.reduce((sum, d) => sum + d.commission, 0) * 100) / 100;
+    assert.equal(total, Math.round(agentCases.reduce((sum, [, c]) => sum + c, 0) * 100) / 100, 'Total Commission = agents\' deals only');
+  } finally {
+    for (const id of ids) await app.api.del(`/api/deals/${id}`, app.adminToken);
+    for (const u of users) await app.api.del(`/api/users/${u.id}`, app.adminToken);
+  }
+});
+
+test('commission is earned when the deal is made: recalculated only when the value or the seller changes', async () => {
+  const seller = await app.createUser({ teamLeaderId: T.id }); // an agent
+  const r = await app.api.post('/api/deals', { leadName: 'Promotion Check', clientPhone: app.uniquePhone(), amount: 4000000, agentId: seller.id }, app.adminToken);
+  const id = r.body.id;
+  try {
+    assert.equal(r.body.item.commission, 20000);
+    // the agent is promoted later; editing something else on the deal keeps the commission they earned
+    assert.equal((await app.api.put(`/api/users/${seller.id}`, { role: 'team_leader' }, app.adminToken)).status, 200);
+    const noted = await app.api.put(`/api/deals/${id}`, { notes: 'contract signed', status: 'approved' }, app.adminToken);
+    assert.equal(noted.body.item.commission, 20000);
+    // a new value is a new calculation, with the seller's role at that time
+    const repriced = await app.api.put(`/api/deals/${id}`, { amount: 6000000 }, app.adminToken);
+    assert.equal(repriced.body.item.amount, 6000000, 'a new amount is really stored (it used to be ignored)');
+    assert.equal(repriced.body.item.commission, 0, 'the seller is no longer an agent');
+    // handing the deal to an agent recalculates for that agent
+    const reassigned = await app.api.put(`/api/deals/${id}`, { agentId: A1.id }, app.adminToken);
+    assert.equal(reassigned.body.item.commission, 30000);
+  } finally {
+    await app.api.del(`/api/deals/${id}`, app.adminToken);
+    await app.api.del(`/api/users/${seller.id}`, app.adminToken);
+  }
 });
 
 test('concurrency: 40 parallel lead creates and comments get unique ids, no 500s', async () => {

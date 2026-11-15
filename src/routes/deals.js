@@ -5,6 +5,7 @@ import { nowSql, todayUtc } from '../lib/dates.js';
 import { requireSuper } from '../auth/policy.js';
 import { insertRow } from '../db.js';
 import { serializeDeal } from '../domain/serializers.js';
+import { commissionFor } from '../domain/commission.js';
 
 const MAX_ATTACHMENT_JSON = 22 * 1024 * 1024;
 const DEAL_STATUSES = ['pending', 'approved', 'closed', 'cancelled', 'rejected'];
@@ -65,7 +66,7 @@ export function dealRoutes(ctx) {
       amount: v.money(body.amount, 'amount'),
       contractPrice: v.money(body.contractPrice, 'contractPrice'),
       reservationPrice: v.money(body.reservationPrice, 'reservationPrice'),
-      commission: v.money(body.commission, 'commission'),
+      // `commission` is not read from the request: the server calculates it from the deal value (domain/commission.js)
       status: status ? status.toLowerCase() : undefined,
       stage: v.string(body.stage, 'stage', { max: 50 }),
       reservationDate: v.date(body.reservationDate, 'reservationDate'),
@@ -77,9 +78,6 @@ export function dealRoutes(ctx) {
       reservationImages: list(body.reservationImages ?? body.reservationsImages, 'reservationImages'),
     };
     if (JSON.stringify([parsed.attachments ?? [], parsed.reservationImages ?? []]).length > MAX_ATTACHMENT_JSON) v.fail('attachments', 'are too large');
-    if (parsed.commission !== undefined && (parsed.contractPrice ?? parsed.amount) !== undefined && parsed.commission > (parsed.contractPrice ?? parsed.amount)) {
-      v.fail('commission', 'cannot be higher than the deal amount');
-    }
     return parsed;
   }
 
@@ -91,8 +89,8 @@ export function dealRoutes(ctx) {
   }
 
   /** `d` is a complete deal in the client's shape; produces every column (canonical + legacy mirrors). */
-  async function buildRow(tx, d, { id, now, create }) {
-    const agent = d.agentId ? await tx.one('SELECT id, name FROM users WHERE id = ?', [d.agentId]) : null;
+  async function buildRow(tx, d, { id, now, create, keepCommission }) {
+    const agent = d.agentId ? await tx.one('SELECT id, name, role FROM users WHERE id = ?', [d.agentId]) : null;
     if (d.agentId && !agent) throw badRequest('Unknown agent', [{ field: 'agentId', message: 'does not exist' }]);
     if (d.brokerId && !(await tx.one('SELECT id FROM brokers WHERE id = ?', [d.brokerId]))) throw badRequest('Unknown broker', [{ field: 'brokerId', message: 'does not exist' }]);
     const agentName = agent?.name ?? 'Unknown';
@@ -113,7 +111,7 @@ export function dealRoutes(ctx) {
       contractPrice: d.contractPrice ?? null, price: price || null, amount: price,
       contractDate: d.contractDate ?? null, contract_date: d.contractDate ?? null,
       unitNumber: d.unitNumber ?? null, unit_number: d.unitNumber ?? null,
-      commission: d.commission ?? 0, stage: d.stage ?? null, notes: d.notes ?? null, comment: d.notes ?? null,
+      commission: keepCommission ?? commissionFor(price, agent?.role), stage: d.stage ?? null, notes: d.notes ?? null, comment: d.notes ?? null,
       status: d.status ?? 'pending', user_id: d.agentId ?? null, date: d.date ?? d.contractDate ?? todayUtc(), updated_at: now,
     };
     if (create) { row.createdAt = now; row.created_at = now; }
@@ -153,8 +151,18 @@ export function dealRoutes(ctx) {
       v.assert();
       const merged = { ...serializeDeal(existing) };
       merged.agentId = existing.user_id ?? existing.agent_id ?? existing.agentId ?? null;
+      // the real contract price column only: the serializer falls back to `price` (= the deal value), which made a new
+      // `amount` on a deal without a contract price silently ignored
+      merged.contractPrice = existing.contractPrice ?? existing.contract_price ?? undefined;
       for (const [key, value] of Object.entries(parsed)) if (value !== undefined) merged[key] = value;
-      const row = await buildRow(tx, merged, { id, now: nowSql(), create: false });
+      // Commission is earned when the deal is made: it is recalculated only when the deal value or its seller changes,
+      // so a later promotion of the agent (or an edit of the notes) never rewrites an old deal's commission.
+      const storedSeller = Number(existing.user_id ?? existing.agent_id ?? existing.agentId ?? 0);
+      const storedValue = Number(existing.contractPrice ?? existing.contract_price ?? 0) || Number(existing.amount ?? existing.price ?? 0);
+      const newValue = Number(merged.contractPrice || merged.amount || 0);
+      const changed = (parsed.agentId !== undefined && Number(parsed.agentId) !== storedSeller)
+        || ((parsed.contractPrice !== undefined || parsed.amount !== undefined) && newValue !== storedValue);
+      const row = await buildRow(tx, merged, { id, now: nowSql(), create: false, keepCommission: changed ? undefined : Number(existing.commission ?? 0) });
       const filtered = schema.only('deals', row);
       const cols = Object.keys(filtered);
       await tx.exec(`UPDATE deals SET ${cols.map((c) => `\`${c}\` = ?`).join(', ')} WHERE id = ?`, [...cols.map((c) => filtered[c]), id]);

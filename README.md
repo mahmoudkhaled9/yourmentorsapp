@@ -46,9 +46,13 @@ none of them drops or rewrites data. Each file says how to roll it back by hand.
 | `npm run db:audit` | **read-only** integrity audit of the database in `.env`: migrations, roles, bcrypt, reporting loops, orphan references, option values, duplicates |
 | `npm run seed:dev` | adds the demo company to the **local** development database through the API (refuses anything but `127.0.0.1:3306/mentors_crm`); idempotent, never changes existing rows. `-- --fix-orphans` detaches projects from deleted developers. Password in the git-ignored `.dev-seed-accounts.local.txt` |
 | `npm run fix:developer-logos` | **dry run** of the developer-logo repair: sets the logo verified for each built-in developer (`src/domain/developerLogos.js`; developers without a verified file get none). Add `-- --apply` to update; only rows still holding a value this project shipped are changed, an admin's own logo is kept. Take a backup first. |
+| `npm run fix:deal-commissions` | **dry run**: lists deals whose stored commission differs from the rule (5,000 EGP per million of the deal value, agents only; `src/domain/commission.js`). Add `-- --apply` to update. Uses each seller's current role, so review the list first. Take a backup first. |
 
 ## Rules enforced by the API (not only by the screens)
 
+- Commission: the server calculates it on every deal save — 5,000 EGP per 1,000,000 EGP of the deal value (contract
+  price, else amount), for deals sold by an **agent** only; other roles earn 0. A commission sent by a client is ignored.
+  It is recalculated only when the deal value or its seller changes.
 - Roles: `admin` / `franchise_owner` (everything), `director`, `sales_manager`, `sales_supervisor`, `team_leader`
   (their own team, can assign inside it), `agent` (own records). The team is the `users.parent_id` tree; records outside
   your team answer 404.
