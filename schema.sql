@@ -261,3 +261,83 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at TIMESTAMP NULL,
   updated_at TIMESTAMP NULL
 );
+
+-- ---------------------------------------------------------------------------------------------------------------
+-- Number Pool (migration 010). Numbers uploaded by an administrator wait here until an agent requests a batch.
+-- pool_batch_items is the allocation history: one row per (batch, number), never deleted; only its end is recorded.
+-- Who may see what is decided by the users.parent_id tree only (src/routes/pool.js), never by role.
+CREATE TABLE IF NOT EXISTS pool_imports (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  file_name VARCHAR(255) NULL,
+  uploaded_by INT NULL,
+  row_count INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NULL,
+  FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS pool_batches (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  user_id INT NOT NULL,
+  requested_by INT NOT NULL,
+  size_requested INT NOT NULL,
+  size_allocated INT NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'active',
+  created_at TIMESTAMP NULL,
+  completed_at TIMESTAMP NULL,
+  cancelled_at TIMESTAMP NULL,
+  cancelled_by INT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY (requested_by) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY (cancelled_by) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS pool_numbers (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  import_id INT NULL,
+  source_row INT NULL,
+  name VARCHAR(255) NOT NULL,
+  phone VARCHAR(50) NOT NULL,
+  phone_key VARCHAR(50) NOT NULL,
+  notes TEXT NULL,
+  destination VARCHAR(500) NULL,
+  property_type VARCHAR(500) NULL,
+  budget_min DECIMAL(15,2) NULL,
+  budget_max DECIMAL(15,2) NULL,
+  delivery VARCHAR(100) NULL,
+  finishing VARCHAR(100) NULL,
+  purpose VARCHAR(100) NULL,
+  down_payment DECIMAL(15,2) NULL,
+  installment DECIMAL(15,2) NULL,
+  original_json TEXT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'available',
+  user_id INT NULL,
+  batch_id INT NULL,
+  allocated_at TIMESTAMP NULL,
+  processed_at TIMESTAMP NULL,
+  created_at TIMESTAMP NULL,
+  updated_at TIMESTAMP NULL,
+  UNIQUE KEY uq_pool_numbers_phone (phone_key),
+  FOREIGN KEY (import_id) REFERENCES pool_imports(id) ON DELETE SET NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (batch_id) REFERENCES pool_batches(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS pool_batch_items (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  batch_id INT NOT NULL,
+  pool_number_id INT NOT NULL,
+  user_id INT NOT NULL,
+  allocated_at TIMESTAMP NULL,
+  ended_at TIMESTAMP NULL,
+  end_reason VARCHAR(20) NULL,
+  ended_by INT NULL,
+  outcome VARCHAR(30) NULL,
+  notes TEXT NULL,
+  lead_id INT NULL,
+  cold_call_id INT NULL,
+  UNIQUE KEY uq_pool_items_batch_number (batch_id, pool_number_id),
+  FOREIGN KEY (batch_id) REFERENCES pool_batches(id) ON DELETE RESTRICT,
+  FOREIGN KEY (pool_number_id) REFERENCES pool_numbers(id) ON DELETE RESTRICT,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+  FOREIGN KEY (ended_by) REFERENCES users(id) ON DELETE SET NULL
+);

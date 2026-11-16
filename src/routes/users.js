@@ -165,6 +165,12 @@ export function userRoutes(ctx) {
       const existing = await tx.one('SELECT * FROM users WHERE id = ? FOR UPDATE', [id]);
       if (!existing) throw notFound('User not found');
       if (SUPER_ROLES.has(normalizeRole(existing.role)) && Number(existing.status ?? 1) === 1) await assertAnotherSuperRemains(tx, id);
+      // Number Pool allocation history is permanent: someone who ever held pool numbers is deactivated, not deleted.
+      if (schema.hasTable('pool_batch_items')) {
+        const held = await tx.one('SELECT COUNT(*) AS c FROM pool_batch_items WHERE user_id = ?', [id]);
+        const batches = await tx.one('SELECT COUNT(*) AS c FROM pool_batches WHERE user_id = ? OR requested_by = ?', [id, id]);
+        if (Number(held.c) + Number(batches.c) > 0) throw conflict('This user has Number Pool history. Deactivate the account instead, so the allocation history stays complete.', 'HAS_POOL_HISTORY');
+      }
       // The production schema has no foreign keys: emulate ON DELETE SET NULL so nothing points at a missing user.
       const nullify = async (table, setSql, where = 'user_id') => {
         if (schema.hasTable(table) && schema.has(table, where)) await tx.exec(`UPDATE \`${table}\` SET ${setSql} WHERE \`${where}\` = ?`, [id]);
@@ -178,6 +184,10 @@ export function userRoutes(ctx) {
       await nullify('pipeline', 'owner_id = NULL', 'owner_id');
       await nullify('call_history', 'user_id = NULL');
       await nullify('calendar_events', 'user_id = NULL');
+      await nullify('pool_imports', 'uploaded_by = NULL', 'uploaded_by');
+      await nullify('pool_batches', 'cancelled_by = NULL', 'cancelled_by');
+      await nullify('pool_batch_items', 'ended_by = NULL', 'ended_by');
+      await nullify('pool_numbers', 'user_id = NULL');
       if (schema.hasTable('notifications')) await tx.exec('DELETE FROM notifications WHERE user_id = ?', [id]);
       await tx.exec('DELETE FROM users WHERE id = ?', [id]);
       return existing;

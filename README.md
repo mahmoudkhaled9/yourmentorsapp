@@ -53,9 +53,12 @@ none of them drops or rewrites data. Each file says how to roll it back by hand.
 - Commission: the server calculates it on every deal save — 5,000 EGP per 1,000,000 EGP of the deal value (contract
   price, else amount), for deals sold by an **agent** only; other roles earn 0. A commission sent by a client is ignored.
   It is recalculated only when the deal value or its seller changes.
-- Roles: `admin` / `franchise_owner` (everything), `director`, `sales_manager`, `sales_supervisor`, `team_leader`
-  (their own team, can assign inside it), `agent` (own records). The team is the `users.parent_id` tree; records outside
-  your team answer 404.
+- Roles: `admin` / `franchise_owner` (everything), `ceo`, `head_of_sales`, `director`, `sales_manager`,
+  `sales_supervisor`, `team_leader` (their own team, can assign inside it), `agent` (own records). The team is the
+  `users.parent_id` tree; records outside your team answer 404.
+- Number Pool (`/api/pool/*`, [docs/NUMBER-POOL.md](docs/NUMBER-POOL.md)): agents request batches of 5 / 10 / 20. Pool
+  records are visible to their owner and the people above the owner in the reporting tree only, with **no** admin
+  bypass; administrators get anonymous totals.
 - Phones: employees need an Egyptian mobile (11 digits, 010/011/012/015). Client numbers may also be international (`+`).
 - Lead requirements: destinations and property types come from admin-managed lists (`/api/destinations`,
   `/api/property-types`, `/api/lead-options`); deactivated choices stay on existing leads but cannot be newly picked.

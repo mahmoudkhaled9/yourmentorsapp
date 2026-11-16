@@ -32,10 +32,20 @@ export const RELATIONS = [
   ['deals', ['developer_id', 'developerId'], 'developers'],
   ['deals', ['user_id', 'agentId'], 'users'],
   ['users', ['parent_id'], 'users'],
+  ['pool_numbers', ['import_id'], 'pool_imports'],
+  ['pool_numbers', ['user_id'], 'users'],
+  ['pool_numbers', ['batch_id'], 'pool_batches'],
+  ['pool_batches', ['user_id'], 'users'],
+  ['pool_batch_items', ['batch_id'], 'pool_batches'],
+  ['pool_batch_items', ['pool_number_id'], 'pool_numbers'],
+  ['pool_batch_items', ['user_id'], 'users'],
   ['jobtitles', ['department_id'], 'departments'],
   ['reports', ['comment_id'], 'comments'],
   // By design (no silent data loss): deleting a lead or cold call keeps its comment history. Reported as a note.
   ['comments', ['lead_id'], 'leads', 'kept-history'],
+  // a lead / cold call created from a pool number may be deleted later; the pool history keeps the reference
+  ['pool_batch_items', ['lead_id'], 'leads', 'kept-history'],
+  ['pool_batch_items', ['cold_call_id'], 'cold_calls', 'kept-history'],
   ['comments', ['cold_call_id'], 'cold_calls', 'kept-history'],
 ];
 

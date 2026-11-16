@@ -25,7 +25,7 @@ CREATE USER '<prod-user>'@'<api-server-host>' IDENTIFIED BY '<strong-password>';
 GRANT ALL PRIVILEGES ON `<prod-db>`.* TO '<prod-user>'@'<api-server-host>';   -- this one database only, no global rights
 ```
 
-The schema is created by the API itself on its first start (migrations 000–009, recorded in `schema_migrations`,
+The schema is created by the API itself on its first start (migrations 000–010, recorded in `schema_migrations`,
 guarded by a MySQL lock so two instances cannot run them twice). A new production database receives only:
 the first administrator (`INITIAL_ADMIN_*`), and the configuration lists the screens need (statuses, sources, job
 titles, destinations, property types, the support contact). **No demo users, leads, cold calls, developers or projects.**

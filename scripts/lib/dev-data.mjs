@@ -21,10 +21,11 @@ const LEAD_NAMES = ['Ahmed Hassan', 'Mona Adel', 'Khaled Samir', 'Nour Ali', 'Ha
 const leadPhone = (i) => `011${String(20000000 + i * 137).padStart(8, '0')}`;
 const coldPhone = (i) => `012${String(30000000 + i * 91).padStart(8, '0')}`;
 const userPhone = (i) => `010${String(40000000 + i * 53).padStart(8, '0')}`;
+const poolPhone = (i) => `015${String(50000000 + i * 71).padStart(8, '0')}`;
 
 export async function seedDemoCompany(call, { password, includeAdmin = false } = {}) {
   if (!password) throw new Error('a password for the demo accounts is required');
-  const created = { users: 0, leads: 0, coldCalls: 0, deals: 0, brokers: 0, calls: 0 };
+  const created = { users: 0, leads: 0, coldCalls: 0, deals: 0, brokers: 0, calls: 0, poolNumbers: 0 };
 
   // ---- users (top-down, so every manager exists before the people reporting to them) --------------------------
   const usersByEmail = new Map((await call('GET', 'users')).map((u) => [String(u.email).toLowerCase(), u]));
@@ -115,5 +116,22 @@ export async function seedDemoCompany(call, { password, includeAdmin = false } =
     await call('POST', 'brokers', { name: 'Cairo Brokers', phone: '01000001111', developerId: firstDeveloper });
     created.brokers += 1;
   }
+  // Number Pool: numbers waiting for agents, with the requirement columns of a typical upload (re-runs add nothing:
+  // the server skips phones that are already in the pool)
+  const PLACES = ['New Cairo', 'Sheikh Zayed', 'New Capital', 'North Coast'];
+  const pool = await call('POST', 'pool/import', {
+    fileName: 'demo-number-pool.xlsx',
+    rows: Array.from({ length: 40 }, (_, i) => ({
+      name: `Pool Prospect ${i + 1}`,
+      phone: poolPhone(i),
+      fields: {
+        Name: `Pool Prospect ${i + 1}`, Mobile: poolPhone(i), Destination: PLACES[i % PLACES.length], Budget: `${3 + (i % 4)}M - ${6 + (i % 4)}M`,
+        'Property Type': i % 3 ? 'Apartment' : 'Villa', Delivery: ['RTM', '1 year', '2 years', '3 years'][i % 4],
+        Finishing: ['Fully finished', 'Semi finished', 'Core & Shell'][i % 3], 'Purpose of Purchase': i % 2 ? 'Investment' : 'End user',
+        'Down Payment': `${500 + (i % 5) * 100}k`, Installments: `${90 + (i % 4) * 10}k`,
+      },
+    })),
+  });
+  created.poolNumbers += Number(pool?.count ?? 0);
   return created;
 }

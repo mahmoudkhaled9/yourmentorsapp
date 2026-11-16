@@ -3,13 +3,15 @@ import { forbidden } from '../http/errors.js';
 /**
  * Roles (the frontend uses the same names):
  *   franchise_owner, admin                  – the whole company ("super" roles)
- *   director, sales_manager, sales_supervisor, team_leader – their own reporting subtree, may assign within it
+ *   ceo, head_of_sales, director, sales_manager, sales_supervisor, team_leader – their own reporting subtree, may
+ *                                             assign within it (a CEO at the top of the tree therefore sees everyone)
  *   agent                                   – their own records only
+ * The Number Pool is stricter: nobody gets a role bypass there (see loadTreeScope).
  * What a person may see is decided by the users.parent_id tree, never by data sent from the browser.
  */
-export const ROLES = ['admin', 'franchise_owner', 'director', 'sales_manager', 'sales_supervisor', 'team_leader', 'agent'];
+export const ROLES = ['admin', 'franchise_owner', 'ceo', 'head_of_sales', 'director', 'sales_manager', 'sales_supervisor', 'team_leader', 'agent'];
 export const SUPER_ROLES = new Set(['admin', 'franchise_owner']);
-export const ASSIGNER_ROLES = new Set([...SUPER_ROLES, 'director', 'sales_manager', 'sales_supervisor', 'team_leader']);
+export const ASSIGNER_ROLES = new Set([...SUPER_ROLES, 'ceo', 'head_of_sales', 'director', 'sales_manager', 'sales_supervisor', 'team_leader']);
 
 export const normalizeRole = (value) => String(value ?? 'agent').trim().toLowerCase().replace(/[\s-]+/g, '_');
 export const isSuper = (user) => SUPER_ROLES.has(normalizeRole(user?.role));
@@ -77,4 +79,16 @@ export async function loadScope(db, user) {
 export async function descendantsOf(db, userId) {
   const rows = await db.rows('SELECT id, parent_id FROM users');
   return walk(childrenMap(rows, { activeOnly: false }), userId);
+}
+
+/**
+ * Strict reporting-tree scope with NO role bypass (Number Pool): the user + everyone directly or indirectly below them
+ * in users.parent_id, whatever their status (a deactivated agent's history stays visible to their managers).
+ * Admin / franchise owner get no extra rows here unless they really are ancestors in the tree.
+ */
+export async function loadTreeScope(db, user) {
+  const rows = await db.rows('SELECT id, parent_id FROM users');
+  const ids = walk(childrenMap(rows, { activeOnly: false }), user.id);
+  ids.add(Number(user.id));
+  return new Scope({ all: false, ids });
 }

@@ -11,6 +11,7 @@ import { commentRoutes } from './comments.js';
 import { dealRoutes } from './deals.js';
 import { miscRoutes } from './misc.js';
 import { callActionRoutes } from './callActions.js';
+import { poolRoutes } from './pool.js';
 import { coldCallSpec, leadSpec } from '../domain/recordSpecs.js';
 
 /** Order matters: per-IP limit -> public login -> authentication -> per-user limit -> body parsing -> protected routes. */
@@ -40,6 +41,7 @@ export function createApiRouter(ctx) {
   api.use(commentRoutes(ctx));
   api.use(dealRoutes(ctx));
   api.use(callActionRoutes(ctx));
+  api.use(poolRoutes(ctx));
   api.use(miscRoutes(ctx));
   return api;
 }

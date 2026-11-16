@@ -17,10 +17,10 @@ const asAdmin = (method, path, body) => app.api.call(method, `/api/${path}`, { t
 
 test('seed: a fresh database + base seed + demo company has no orphan relationship; a second run creates nothing', async () => {
   const first = await seedDemoCompany(asAdmin, { password: PASSWORD });
-  assert.ok(first.users >= 9 && first.leads === 12 && first.coldCalls === 6 && first.deals === 2 && first.calls === 1, JSON.stringify(first));
+  assert.ok(first.users >= 9 && first.leads === 12 && first.coldCalls === 6 && first.deals === 2 && first.calls === 1 && first.poolNumbers === 40, JSON.stringify(first));
 
   const again = await seedDemoCompany(asAdmin, { password: PASSWORD });
-  assert.deepEqual(again, { users: 0, leads: 0, coldCalls: 0, deals: 0, brokers: 0, calls: 0 }, 'idempotent: nothing duplicated');
+  assert.deepEqual(again, { users: 0, leads: 0, coldCalls: 0, deals: 0, brokers: 0, calls: 0, poolNumbers: 0 }, 'idempotent: nothing duplicated');
   await seedBaseData(app.ctx); // the startup seed is idempotent too (it runs on every server start)
 
   const { problems } = await findOrphans(app.ctx.db, app.ctx.schema);

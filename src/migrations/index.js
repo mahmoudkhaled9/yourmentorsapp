@@ -8,9 +8,10 @@ import * as requirements from './006_crm_requirements.js';
 import * as projectDetails from './007_project_details.js';
 import * as callActions from './008_call_actions.js';
 import * as safeForeignKeys from './009_safe_foreign_keys.js';
+import * as numberPool from './010_number_pool.js';
 import { nowSql } from '../lib/dates.js';
 
-export const MIGRATIONS = [base, legacy, indexes, emailUnique, passwords, sequences, requirements, projectDetails, callActions, safeForeignKeys];
+export const MIGRATIONS = [base, legacy, indexes, emailUnique, passwords, sequences, requirements, projectDetails, callActions, safeForeignKeys, numberPool];
 const LOCK = 'mentors_crm_migrations';
 
 /**
