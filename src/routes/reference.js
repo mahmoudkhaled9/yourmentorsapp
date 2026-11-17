@@ -2,7 +2,7 @@ import express from 'express';
 import { asyncHandler, badRequest, conflict, notFound } from '../http/errors.js';
 import { Validator, bodyOf, parseId } from '../lib/validate.js';
 import { nowSql } from '../lib/dates.js';
-import { requireSuper } from '../auth/policy.js';
+import { requireDeveloperAccess, requireSuper } from '../auth/policy.js';
 import { insertRow } from '../db.js';
 import { serializeDeveloper } from '../domain/serializers.js';
 import { DELIVERY_OPTIONS, FINISHING_OPTIONS, OPTION_LABELS, PURPOSE_OPTIONS } from '../domain/requirements.js';
@@ -172,6 +172,7 @@ export function referenceRoutes(ctx) {
 
   // ---- developers ---------------------------------------------------------------------------------------------------
   router.get('/developers', asyncHandler(async (req, res) => {
+    requireDeveloperAccess(req.currentUser); // 403 for agents; writes below are administrators only
     const cols = schema.pick('developers', ['id', 'name', 'logo', 'description', 'phone', 'whatsapp', 'email', 'website', 'updated_at']);
     res.json((await db.rows(`SELECT ${cols.join(', ')} FROM developers ORDER BY id ASC`)).map(serializeDeveloper));
   }));

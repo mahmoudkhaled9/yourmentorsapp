@@ -21,6 +21,11 @@ export const isActiveUser = (user) => Number(user?.status ?? 1) === 1;
 export function requireSuper(user, message = 'Only administrators can do this') {
   if (!isSuper(user)) throw forbidden(message);
 }
+/** Developers (page + API): agents have no access at all (2026-11-16); every other role keeps what it had. */
+export const canSeeDevelopers = (user) => normalizeRole(user?.role) !== 'agent';
+export function requireDeveloperAccess(user) {
+  if (!canSeeDevelopers(user)) throw forbidden('Agents do not have access to Developers');
+}
 export function requireAssigner(user, message = 'You are not allowed to assign records to other users') {
   if (!canAssign(user)) throw forbidden(message);
 }

@@ -8,7 +8,7 @@ import { insertRow } from '../db.js';
 import { inClause, teamLeaderFor, userBrief } from '../domain/lookups.js';
 import { coldCallSpec, leadSpec } from '../domain/recordSpecs.js';
 import { upsertReportForComment } from '../domain/reports.js';
-import { DELIVERY_OPTIONS, FINISHING_OPTIONS, PURPOSE_OPTIONS, saveRequirements } from '../domain/requirements.js';
+import { DELIVERY_OPTIONS, FINISHING_OPTIONS, LEGACY_PURPOSES, PURPOSE_OPTIONS, parseRequirements, saveRequirements } from '../domain/requirements.js';
 import { BATCH_SIZES, OUTCOMES, OUTCOME_KEYS, readUploadedRow, requirementsText, serializeBatch, serializeItem } from '../domain/pool.js';
 
 export const MAX_POOL_IMPORT_ROWS = 10000;
@@ -45,6 +45,20 @@ export function poolRoutes(ctx) {
   const router = express.Router();
   const treeScope = (req) => { req.poolScope ??= loadTreeScope(db, req.currentUser); return req.poolScope; };
   const hidden = (what) => notFound(`${what} not found`);
+
+  /**
+   * Time window: `since` / `until` are exact instants (the browser sends its own local midnight, so "today" follows the
+   * user's clock, not UTC); `from` / `to` are whole UTC days (kept for API clients). `until` is exclusive.
+   */
+  function timeRange(query, v) {
+    return { from: v.date(query.from, 'from'), to: v.date(query.to, 'to'), since: v.datetime(query.since, 'since'), until: v.datetime(query.until, 'until') };
+  }
+  function addRange(where, params, column, r) {
+    if (r.from) { where.push(`${column} >= ?`); params.push(`${r.from} 00:00:00`); }
+    if (r.to) { where.push(`${column} <= ?`); params.push(`${r.to} 23:59:59`); }
+    if (r.since) { where.push(`${column} >= ?`); params.push(r.since); }
+    if (r.until) { where.push(`${column} < ?`); params.push(r.until); }
+  }
 
   function paging(query, v) {
     const page = v.int(query.page, 'page', { min: 1, max: 100000 }) ?? 1;
@@ -133,6 +147,7 @@ export function poolRoutes(ctx) {
     const v = new Validator();
     const userId = v.int(req.query.userId, 'userId', { min: 1 });
     const status = v.oneOf(req.query.status, 'status', ['active', 'completed', 'cancelled']);
+    const range = timeRange(req.query, v);
     const { page, pageSize, offset } = paging(req.query, v);
     v.assert();
     const f = scope.sqlIn('b.user_id');
@@ -140,6 +155,7 @@ export function poolRoutes(ctx) {
     const params = [...f.params];
     if (userId) { where.push('b.user_id = ?'); params.push(userId); } // narrows the scope, never widens it
     if (status) { where.push('b.status = ?'); params.push(status); }
+    addRange(where, params, 'b.created_at', range);
     const sql = where.join(' AND ');
     const total = await db.one(`SELECT COUNT(*) AS c FROM pool_batches b WHERE ${sql}`, params);
     const rows = await db.rows(`${BATCH_SELECT} WHERE ${sql} ORDER BY b.id DESC LIMIT ${pageSize} OFFSET ${offset}`, params);
@@ -203,8 +219,7 @@ export function poolRoutes(ctx) {
     const batchId = v.int(req.query.batchId, 'batchId', { min: 1 });
     const state = v.oneOf(req.query.state, 'state', ['open', 'processed', 'released', 'cancelled']);
     const outcome = v.oneOf(req.query.outcome, 'outcome', OUTCOME_KEYS);
-    const from = v.date(req.query.from, 'from');
-    const to = v.date(req.query.to, 'to');
+    const range = timeRange(req.query, v);
     const search = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) : '';
     const { page, pageSize, offset } = paging(req.query, v);
     v.assert();
@@ -216,8 +231,7 @@ export function poolRoutes(ctx) {
     if (state === 'open') where.push('i.ended_at IS NULL');
     else if (state) { where.push('i.end_reason = ?'); params.push(state); }
     if (outcome) { where.push('i.outcome = ?'); params.push(outcome); }
-    if (from) { where.push('i.allocated_at >= ?'); params.push(`${from} 00:00:00`); }
-    if (to) { where.push('i.allocated_at <= ?'); params.push(`${to} 23:59:59`); }
+    addRange(where, params, 'i.allocated_at', range);
     if (search) {
       where.push('(LOWER(n.name) LIKE ? OR n.phone LIKE ?)');
       params.push(`%${search.toLowerCase()}%`, `%${digits(search) || search}%`);
@@ -265,7 +279,31 @@ export function poolRoutes(ctx) {
     };
   }
 
-  async function createRecord(tx, kind, n, owner, notes) {
+  /**
+   * The request the agent wrote during the call (same shape and rules as a lead's requirements). It replaces the
+   * number's requirement fields, so the agent's managers see what the client actually asked for; the original upload
+   * stays untouched in original_json.
+   */
+  async function saveRequest(tx, numberId, req) {
+    const names = async (table, ids, field) => {
+      if (!ids.length) return null;
+      const q = inClause(ids);
+      const rows = await tx.rows(`SELECT id, name, is_active FROM \`${table}\` WHERE id IN (${q.sql})`, q.params);
+      const byId = new Map(rows.map((r) => [Number(r.id), r]));
+      const bad = ids.filter((id) => !byId.has(id) || Number(byId.get(id).is_active ?? 1) !== 1);
+      if (bad.length) throw badRequest(`This ${field === 'destinationIds' ? 'destination' : 'property type'} cannot be chosen: ${bad.join(', ')}`, [{ field: `requirements.${field}`, message: 'does not exist or is deactivated' }]);
+      return ids.map((id) => byId.get(id).name).join(', ').slice(0, 500);
+    };
+    if (LEGACY_PURPOSES.includes(req.purpose)) throw badRequest('Purpose of purchase must be End User or Investment', [{ field: 'requirements.purpose', message: 'must be End User or Investment' }]);
+    await tx.exec(
+      `UPDATE pool_numbers SET destination = ?, property_type = ?, budget_min = ?, budget_max = ?, delivery = ?, finishing = ?, purpose = ?,
+              down_payment = ?, installment = ?, updated_at = ? WHERE id = ?`,
+      [await names('destinations', req.destinationIds, 'destinationIds'), await names('property_types', req.propertyTypeIds, 'propertyTypeIds'),
+        req.budgetMin, req.budgetMax, req.delivery, req.finishing, req.purpose, req.downPayment, req.installmentPerQuarter, nowSql(), numberId],
+    );
+  }
+
+  async function createRecord(tx, kind, n, owner, notes, request) {
     const spec = kind === 'lead' ? leadSpec(ctx) : coldCallSpec();
     const phone = normalizeClientPhone(n.phone, { allowMissingZero: true }) ?? n.phone;
     const dup = await tx.one(`SELECT id FROM \`${spec.table}\` WHERE phone = ? LIMIT 1`, [phone]);
@@ -276,7 +314,7 @@ export function poolRoutes(ctx) {
     const teamLeader = await teamLeaderFor(tx, owner);
     const row = spec.buildRow({ input, refs, owner, teamLeader, existing: null, now: nowSql(), ownerChanged: true });
     const id = await insertRow(tx, spec.table, ctx.schema.only(spec.table, row));
-    if (kind === 'lead') await saveRequirements(tx, id, await leadRequirements(tx, n));
+    if (kind === 'lead') await saveRequirements(tx, id, request ?? await leadRequirements(tx, n));
     if (text) {
       // the call note + every uploaded requirement, as the first entry of the record's comment history
       const now = nowSql();
@@ -301,6 +339,7 @@ export function poolRoutes(ctx) {
     const v = new Validator();
     const outcome = v.oneOf(body.outcome, 'outcome', OUTCOME_KEYS, { required: true });
     const notes = v.string(body.notes, 'notes', { max: 2000 });
+    const request = parseRequirements(body.requirements ?? undefined, v) ?? undefined; // optional: the request written in the call
     v.assert();
     const result = await db.tx(async (tx) => {
       const item = await tx.one('SELECT * FROM pool_batch_items WHERE id = ? FOR UPDATE', [id]);
@@ -309,9 +348,11 @@ export function poolRoutes(ctx) {
       if (item.ended_at) throw conflict('This number has already been processed or handed back', 'ITEM_CLOSED');
       const batch = await tx.one('SELECT status FROM pool_batches WHERE id = ? FOR UPDATE', [item.batch_id]);
       if (batch?.status !== 'active') throw conflict('This batch is closed', 'BATCH_CLOSED');
-      const number = await tx.one('SELECT * FROM pool_numbers WHERE id = ? FOR UPDATE', [item.pool_number_id]);
+      await tx.one('SELECT id FROM pool_numbers WHERE id = ? FOR UPDATE', [item.pool_number_id]);
+      if (request) await saveRequest(tx, item.pool_number_id, request);
+      const number = await tx.one('SELECT * FROM pool_numbers WHERE id = ?', [item.pool_number_id]);
       const owner = await userBrief(tx, actor.id);
-      const leadId = outcome === 'lead' ? await createRecord(tx, 'lead', number, owner, notes) : null;
+      const leadId = outcome === 'lead' ? await createRecord(tx, 'lead', number, owner, notes, request) : null;
       const coldCallId = outcome === 'cold_call' ? await createRecord(tx, 'cold_call', number, owner, notes) : null;
       const now = nowSql();
       await tx.exec(
@@ -322,7 +363,7 @@ export function poolRoutes(ctx) {
       await closeBatchIfDone(tx, item.batch_id, now);
       return { leadId, coldCallId, batchId: Number(item.batch_id) };
     }, { tables: ['pool_numbers', 'leads', 'cold_calls', 'comments'] });
-    await audit({ userId: actor.id, entityType: 'pool_batch_items', entityId: id, action: 'processed', summary: `Pool number processed (batch #${result.batchId}): ${OUTCOMES[outcome]}` });
+    await audit({ userId: actor.id, entityType: 'pool_batch_items', entityId: id, action: 'processed', summary: `Pool number processed (batch #${result.batchId}): ${OUTCOMES[outcome]}${request ? ', request written by the agent' : ''}` });
     const row = await db.one(`${ITEM_SELECT} WHERE i.id = ?`, [id]);
     res.json({ ok: true, item: serializeItem(row), leadId: result.leadId, coldCallId: result.coldCallId });
   }));
@@ -331,16 +372,14 @@ export function poolRoutes(ctx) {
   router.get('/pool/report', asyncHandler(async (req, res) => {
     const scope = await treeScope(req);
     const v = new Validator();
-    const from = v.date(req.query.from, 'from');
-    const to = v.date(req.query.to, 'to');
+    const range = timeRange(req.query, v);
     const userId = v.int(req.query.userId, 'userId', { min: 1 });
     v.assert();
     const f = scope.sqlIn('i.user_id');
     const where = [f.sql];
     const params = [...f.params];
     if (userId) { where.push('i.user_id = ?'); params.push(userId); }
-    if (from) { where.push('i.allocated_at >= ?'); params.push(`${from} 00:00:00`); }
-    if (to) { where.push('i.allocated_at <= ?'); params.push(`${to} 23:59:59`); }
+    addRange(where, params, 'i.allocated_at', range);
     const count = (cond) => `SUM(CASE WHEN ${cond} THEN 1 ELSE 0 END)`;
     const rows = await db.rows(
       `SELECT i.user_id, u.name AS user_name, u.role AS user_role, p.name AS parent_name,
@@ -373,7 +412,7 @@ export function poolRoutes(ctx) {
     const totals = { allocated: sum('allocated'), processed: sum('processed'), open: sum('open'), released: sum('released'), batches: sum('batches'), outcomes };
     totals.completionRate = rate(totals.processed, totals.allocated);
     totals.conversionRate = rate(outcomes.lead, totals.processed);
-    res.json({ from: from ?? null, to: to ?? null, rows: people, totals });
+    res.json({ from: range.from ?? null, to: range.to ?? null, since: range.since ?? null, until: range.until ?? null, rows: people, totals });
   }));
 
   // ---------------------------------------------------------------- administration (no employee-level data) -------

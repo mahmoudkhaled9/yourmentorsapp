@@ -363,3 +363,77 @@ test('import: administrators only; duplicates against the pool, Leads and Cold C
   assert.deepEqual({ count: r.body.count, duplicates: r.body.duplicates, invalid: r.body.invalid }, { count: 1, duplicates: 3, invalid: 1 });
   for (const who of ['CEO', 'TL1', 'A']) assert.equal((await post('/pool/import', { rows: [{ phone: app.uniquePhone('015') }] }, who)).status, 403, who);
 });
+
+test('daily view: since / until (the browser\'s local midnight) start History, Batches and Report from 0 each day; older days stay available', async () => {
+  // move batch C to "yesterday" (the data is kept; only today's window excludes it)
+  const yesterday = new Date(Date.now() - 24 * 3600 * 1000);
+  const sql = yesterday.toISOString().slice(0, 19).replace('T', ' ');
+  await app.pool.query('UPDATE pool_batches SET created_at = ? WHERE id = ?', [sql, batches.C.id]);
+  await app.pool.query('UPDATE pool_batch_items SET allocated_at = ? WHERE batch_id = ?', [sql, batches.C.id]);
+
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const end = new Date(start); end.setDate(end.getDate() + 1);
+  const today = `since=${encodeURIComponent(start.toISOString())}&until=${encodeURIComponent(end.toISOString())}`;
+  const dayBefore = new Date(start); dayBefore.setDate(dayBefore.getDate() - 1);
+  const yWindow = `since=${encodeURIComponent(dayBefore.toISOString())}&until=${encodeURIComponent(start.toISOString())}`;
+
+  // C's own views: today is empty (starts again from 0), yesterday still has everything
+  assert.equal((await get(`/pool/items?${today}`, 'C')).body.total, 0);
+  assert.equal((await get(`/pool/batches?${today}`, 'C')).body.items.length, 0);
+  const reportToday = (await get(`/pool/report?${today}`, 'C')).body;
+  assert.deepEqual([reportToday.rows.length, reportToday.totals.allocated], [0, 0]);
+  assert.equal((await get(`/pool/items?${yWindow}`, 'C')).body.total, 5);
+  assert.equal((await get(`/pool/batches?${yWindow}`, 'C')).body.items[0].id, batches.C.id);
+  assert.equal((await get(`/pool/report?${yWindow}`, 'C')).body.totals.allocated, 5);
+
+  // the window never widens the scope
+  const tl1 = await get(`/pool/items?${yWindow}&pageSize=5000`, 'TL1');
+  assert.ok(tl1.body.items.every((i) => [U.A.id, U.B.id].includes(i.userId)));
+  for (const bad of ['since=yesterday', 'until=2026-13-45T00:00:00Z']) assert.equal((await get(`/pool/items?${bad}`, 'C')).status, 400, bad);
+});
+
+test('call result with the full request written by the agent: saved on the number for the managers, used for the lead', async () => {
+  const opts = (await app.api.get('/api/lead-options', app.adminToken)).body;
+  const dest = opts.destinations.filter((d) => d.isActive !== false).slice(0, 2);
+  const type = opts.propertyTypes.find((t) => t.isActive !== false);
+  assert.ok(dest.length && type, 'option lists are seeded');
+  const request = {
+    destinationIds: dest.map((d) => d.id), propertyTypeIds: [type.id], budgetMin: 4000000, budgetMax: 8000000,
+    delivery: 'within_2_years', finishing: 'fully_finished', purpose: 'end_user', downPayment: 800000, installmentPerQuarter: 150000,
+  };
+  const [one, two, three] = batches.B.items;
+
+  // invalid requests are refused and change nothing
+  for (const bad of [{ ...request, budgetMin: 9000000 }, { ...request, delivery: 'tomorrow' }, { ...request, destinationIds: [99999] }, { ...request, purpose: 'upgrading' }]) {
+    const r = await post(`/pool/items/${one.id}/process`, { outcome: 'lead', requirements: bad }, 'B');
+    assert.equal(r.status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await get(`/pool/items/${one.id}`, 'B')).body.state, 'open', 'a refused request records nothing');
+  assert.equal((await post(`/pool/items/${one.id}/process`, { outcome: 'lead', requirements: request }, 'A')).status, 404, 'only the holder');
+
+  const lead = await post(`/pool/items/${one.id}/process`, { outcome: 'lead', notes: 'wants 3 bedrooms', requirements: request }, 'B');
+  assert.equal(lead.status, 200, lead.text);
+  const created = (await get(`/leads/${lead.body.leadId}`, 'B')).body;
+  assert.deepEqual([...created.requirements.destinationIds].sort(), [...request.destinationIds].sort());
+  assert.deepEqual(created.requirements.propertyTypeIds, [type.id]);
+  assert.equal(Number(created.requirements.budgetMax), 8000000);
+  assert.equal(created.requirements.delivery, 'within_2_years');
+  assert.equal(created.requirements.finishing, 'fully_finished');
+  assert.equal(created.requirements.purpose, 'end_user');
+  assert.equal(Number(created.requirements.installmentPerQuarter), 150000);
+
+  // the team leader sees what the client asked for; the upload itself is kept
+  const seen = (await get(`/pool/items/${one.id}`, 'TL1')).body.requirements;
+  assert.equal(seen.destination, dest.map((d) => d.name).join(', '));
+  assert.equal(seen.propertyType, type.name);
+  assert.deepEqual([seen.budgetMin, seen.budgetMax, seen.downPayment, seen.installment], [4000000, 8000000, 800000, 150000]);
+  assert.equal(seen.delivery, 'within_2_years');
+  assert.equal(seen.original.Destination, 'New Cairo', 'original upload untouched');
+  assert.equal((await get(`/pool/items/${one.id}`, 'C')).status, 404, 'still private to the tree');
+
+  // any result can carry the request (e.g. a call-back); without one the uploaded values stay
+  assert.equal((await post(`/pool/items/${two.id}/process`, { outcome: 'cold_call', requirements: { ...request, destinationIds: [] } }, 'B')).status, 200);
+  assert.equal((await get(`/pool/items/${two.id}`, 'B')).body.requirements.destination, null);
+  assert.equal((await post(`/pool/items/${three.id}/process`, { outcome: 'no_answer' }, 'B')).status, 200);
+  assert.equal((await get(`/pool/items/${three.id}`, 'B')).body.requirements.destination, 'New Cairo');
+});
